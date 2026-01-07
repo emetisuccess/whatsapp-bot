@@ -1,6 +1,9 @@
 version: "3.8"
 
 services:
+  # ============================
+  # ORCHESTRATOR
+  # ============================
   orchestrator:
     build: ./orchestrator
     container_name: wa-orchestrator
@@ -12,6 +15,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
-  whatsapp-template:
+  # ============================
+  # WHATSAPP IMAGE BUILDER ONLY
+  # (never runs as a container)
+  # ============================
+  whatsapp-builder:
     build: ./whatsapp-app
     image: whatsapp-service
+    deploy:
+      replicas: 0
