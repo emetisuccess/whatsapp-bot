@@ -19,18 +19,26 @@ const BASE_IMAGE = 'whatsapp-service';
 // AUTH MIDDLEWARE
 // ==========================
 app.use((req, res, next) => {
-  const key = req.headers['x-api-key'];
+  const auth = req.headers['authorization'];
 
-  if (!key || key !== API_KEY) {
-    console.log("❌ Invalid API key:", key);
+  if (!auth) {
+    console.log("❌ Missing Authorization header");
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  const token = auth.replace('Bearer ', '').trim();
+
+  if (token !== API_KEY) {
+    console.log("❌ Invalid API key:", token);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
   console.log("ENV KEY >>>", API_KEY);
   console.log("REQ KEY >>>", req.headers['x-api-key']);
   
   next();
 });
+
 
 // ==========================
 // CREATE CONTAINER
