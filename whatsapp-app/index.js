@@ -18,6 +18,14 @@ const fetch = require('node-fetch');
 const winston = require('winston');
 const axios = require('axios');
 
+// ================== CRASH SAFETY ==================
+process.on('unhandledRejection', err => {
+  console.error('❌ Unhandled rejection:', err);
+});
+process.on('uncaughtException', err => {
+  console.error('❌ Uncaught exception:', err);
+});
+
 // ================== APP SETUP ==================
 const app = express();
 const server = http.createServer(app);
@@ -77,7 +85,6 @@ function logAndBufferError(label, error) {
 // Batch error alerts
 setInterval(() => {
   if (errorLogBuffer.size === 0) return;
-
   const batchedMsg = Array.from(errorLogBuffer).join('\n\n').slice(0, 4000);
   sendTelegramAlert(batchedMsg);
   errorLogBuffer.clear();
@@ -97,8 +104,7 @@ const client = new Client({
 
 // ================== QR HANDLER ==================
 client.on('qr', (qr) => {
-  latestQR = qr; // store latest QR
-
+  latestQR = qr;
   logger.info('QR Code generated');
   qrcode.generate(qr, { small: true });
 
@@ -112,7 +118,7 @@ client.on('qr', (qr) => {
 // ================== READY ==================
 client.on('ready', () => {
   isClientReady = true;
-  latestQR = null; // clear QR once connected
+  latestQR = null;
   logger.info('WhatsApp Client is Ready');
 });
 
@@ -130,144 +136,130 @@ client.on('group_leave', (notification) => {
 // ================== MESSAGE HANDLER ==================
 client.on('message', async (msg) => {
   try {
-    const message = msg.body?.trim();
-    if (!message) return;
+    const text = msg.body?.trim();
+    if (!text) return;
 
-    const message = msg.body.trim();
-    const rawFrom = msg.author || msg.from; // Could be @lid or @c.us
-    const lidId = rawFrom; // Always use this as unique ID
+    const rawFrom = msg.author || msg.from;
+    const lidId = rawFrom;
 
-    try {
-        // Step 1: Handle DM staff registration
-        if (msg.body && msg.body.toUpperCase().startsWith("REGISTER STAFF")) {
-            const parts = msg.body.trim().split("-");
-            if (parts.length === 3) {
-                const staffName = parts[2];
-                const staffPhone = parts[1];
+    // ==========================
+    // STAFF REGISTRATION
+    // ==========================
+    if (text.toUpperCase().startsWith("REGISTER STAFF")) {
+      const parts = text.split("-");
+      if (parts.length === 3) {
+        const staffName = parts[2];
+        const staffPhone = parts[1];
 
-                const contact = await msg.getContact();
-                const lidId = contact.id._serialized;
+        const contact = await msg.getContact();
+        const lid = contact.id._serialized;
 
-                const payload = {
-                    lid: lidId,
-                    phone: staffPhone,
-                    name: staffName,
-                };
-
-                const response = await axios.post('https://elitegentessentials.com/api/map-staff', payload);
-
-                if (response.data && response.data.success) {
-                    const code = response.data.code;
-                    await msg.reply(`✅ Hi ${staffName}, you're almost done! Please copy this code and post it in the group:\n\n🔑 *${code}*`);
-                } else {
-                    await msg.reply(response.data.error);
-                }
-            } else {
-                await msg.reply('⚠️ Invalid format. Use: REGISTER STAFF-phone-name');
-            }
-        }
-
-        // Step 2: Detect unique code posted in group for final mapping
-        // Step 2: Detect unique code posted in group for final mapping
-        if (msg.body && msg.body.startsWith("UNIQUE_CODE_")) {
-            const code = msg.body.trim();
-
-            // Get sender's contact ID (not the group ID)
-            const senderId = msg.author || msg.from; // msg.author is available in group chats
-            // const contact = await client.getContactById(senderId);
-
-            const payload = {
-                code: code,
-                group_lid: msg.from,
-                lid: msg.author,
-                msg: msg,
-            };
-
-            try {
-                const res = await axios.post('https://elitegentessentials.com/api/map-staff-finalize', payload);
-
-                const responseMsg = res.data?.success
-                    ? '✅ You’ve been successfully registered!'
-                    : '❌ Could not complete your registration. Please try again or contact support.';
-
-                // Send DM to user directly
-                await client.sendMessage(res.data.sender_id, responseMsg);
-            } catch (error) {
-                console.error('Error verifying code:', error.message);
-                await client.sendMessage(senderId, '❌ Something went wrong while processing your registration.');
-            }
-        }
-
-
-   } catch (error) {
-        console.error('❌ Error in onMessage:', error.message);
-    }
-
-    // 2. Business owner adding group and agent
-    if (message.toUpperCase().startsWith('ADD GROUP TO CRM -')) {
-        if (!msg.from.includes('@g.us')) {
-            await msg.reply('❌ This command must be used **inside a group chat**.');
-            return;
-        }
-
-        const parts = message.split(' - ');
-        if (parts.length < 3) {
-            await msg.reply('⚠️ Invalid format. Use:\n\n*ADD GROUP TO CRM - Group Name - AgentPhone*');
-            return;
-        }
-
-        const groupName = parts[1].trim();
-        const agentPhoneRaw = parts[2].trim();
-        const agentPhone = agentPhoneRaw.replace(/\D/g, '');
-        const groupId = msg.from;
-        const senderPhone = msg.to;
-        const sender = msg.author;
-
-        if (!/^234\d{10}$/.test(agentPhone)) {
-            await msg.reply('❌ Invalid agent phone number. Must be in 234XXXXXXXXXX format.');
-            return;
-        }
-
-        console.log(`📥 Group mapping request by ${senderPhone} for group "${groupName}" and agent ${agentPhone}`);
+        const payload = { lid, phone: staffPhone, name: staffName };
 
         try {
-            const res = await axios.post('https://elitegentessentials.com/api/map-group-agent', {
-                sender: sender,
-                group_id: groupId,
-                group_name: groupName,
-                agent_phone: agentPhone,
-            });
+          const response = await axios.post(
+            'https://elitegentessentials.com/api/map-staff',
+            payload
+          );
 
-            const data = res.data;
-            if (data.status === 'success') {
-                await msg.reply(data.message || '✅ Agent mapped to group successfully.');
-            } else {
-                await msg.reply(data.message || '⚠️ Unexpected response from server.');
-            }
-
-        } catch (err) {
-            console.error('❌ Group Mapping Error:', err.response?.data || err.message);
-
-            if (err.response) {
-                const errorData = err.response.data;
-                if (errorData.message) {
-                    await msg.reply(`❌ ${errorData.message}`);
-                } else if (errorData.errors) {
-                    const errorMessages = Object.values(errorData.errors).flat().join('\n');
-                    await msg.reply(`❌ Validation failed:\n${errorMessages}`);
-                } else {
-                    await msg.reply('❌ Failed to map group due to server error.');
-                }
-            } else {
-               // await msg.reply('❌ Network error or server unreachable.');
-            }
+          if (response.data?.success) {
+            const code = response.data.code;
+            await msg.reply(
+              `✅ Hi ${staffName}, you're almost done!\nPost this code in the group:\n\n🔑 *${code}*`
+            );
+          } else {
+            await msg.reply(response.data?.error || 'Registration failed');
+          }
+        } catch (e) {
+          await msg.reply('❌ Error processing registration.');
         }
+      } else {
+        await msg.reply('⚠️ Invalid format. Use: REGISTER STAFF-phone-name');
+      }
+      return;
+    }
 
+    // ==========================
+    // UNIQUE CODE FINALIZE
+    // ==========================
+    if (text.startsWith("UNIQUE_CODE_")) {
+      const payload = {
+        code: text,
+        group_lid: msg.from,
+        lid: msg.author,
+      };
+
+      try {
+        const res = await axios.post(
+          'https://elitegentessentials.com/api/map-staff-finalize',
+          payload
+        );
+
+        const responseMsg = res.data?.success
+          ? '✅ You’ve been successfully registered!'
+          : '❌ Registration failed.';
+
+        await client.sendMessage(res.data.sender_id, responseMsg);
+      } catch (error) {
+        await client.sendMessage(
+          msg.author || msg.from,
+          '❌ Error finalizing registration.'
+        );
+      }
+      return;
+    }
+
+    // ==========================
+    // ADD GROUP TO CRM
+    // ==========================
+    if (text.toUpperCase().startsWith('ADD GROUP TO CRM -')) {
+      if (!msg.from.includes('@g.us')) {
+        await msg.reply('❌ This command must be used inside a group.');
         return;
+      }
+
+      const parts = text.split(' - ');
+      if (parts.length < 3) {
+        await msg.reply(
+          '⚠️ Use:\nADD GROUP TO CRM - Group Name - AgentPhone'
+        );
+        return;
+      }
+
+      const groupName = parts[1].trim();
+      const agentPhone = parts[2].replace(/\D/g, '');
+      const groupId = msg.from;
+      const sender = msg.author;
+
+      if (!/^234\d{10}$/.test(agentPhone)) {
+        await msg.reply('❌ Invalid phone format: 234XXXXXXXXXX');
+        return;
+      }
+
+      try {
+        const res = await axios.post(
+          'https://elitegentessentials.com/api/map-group-agent',
+          {
+            sender,
+            group_id: groupId,
+            group_name: groupName,
+            agent_phone: agentPhone,
+          }
+        );
+
+        await msg.reply(
+          res.data?.message || '✅ Agent mapped to group successfully.'
+        );
+
+      } catch (err) {
+        await msg.reply('❌ Failed to map group.');
+      }
+
+      return;
     }
 
   } catch (error) {
-    console.error('❌ Error in onMessage:', error.message);
+    console.error('❌ Error in onMessage:', error);
   }
 });
 
@@ -275,23 +267,17 @@ client.on('message', async (msg) => {
 client.on('message_reaction', async (reaction) => {
   if (cachingEnabled) {
     reactionCache.push(reaction);
-    logger.info('Reaction cached temporarily');
     return;
   }
 
   try {
     const msg = await client.getMessageById(reaction.msgId._serialized);
-    if (!msg || !msg.body) {
-      logAndBufferError("Reaction message missing", new Error("No body"));
-      return;
-    }
-
-    const payload = { message: msg._data, reaction };
+    if (!msg?.body) return;
 
     await fetch("https://elitegentessentials.com/api/checkReaction", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ message: msg._data, reaction })
     });
 
   } catch (err) {
@@ -324,23 +310,13 @@ app.post("/send-order", async (req, res) => {
 
 // ================== QR ENDPOINT ==================
 app.get('/qr', (req, res) => {
-  if (!latestQR) {
-    return res.json({ status: 'waiting' });
-  }
-
-  res.json({
-    status: 'qr',
-    qr: latestQR,
-    instance: INSTANCE_ID
-  });
+  if (!latestQR) return res.json({ status: 'waiting' });
+  res.json({ status: 'qr', qr: latestQR, instance: INSTANCE_ID });
 });
 
 // ================== STATUS ENDPOINT ==================
 app.get('/status', (req, res) => {
-  res.json({
-    ready: isClientReady,
-    instance: INSTANCE_ID
-  });
+  res.json({ ready: isClientReady, instance: INSTANCE_ID });
 });
 
 // ================== HEALTH ==================
@@ -359,4 +335,3 @@ app.listen(HTTP_PORT, () =>
 
 // ================== INIT ==================
 client.initialize();
-
