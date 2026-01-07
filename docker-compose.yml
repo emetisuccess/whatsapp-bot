@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  orchestrator:
+    build: ./orchestrator
+    container_name: wa_orchestrator
+    ports:
+      - "7070:7070"
+    environment:
+      - ORCH_KEY=P+Zt3wGo961Z2T2I4lYbc1mY2SxxeJNI8EKSJz/NlT8=
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  whatsapp-template:
+    build: ./whatsapp-app
+    image: whatsapp-service
