@@ -26,6 +26,9 @@ app.use((req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  console.log("ENV KEY >>>", API_KEY);
+  console.log("REQ KEY >>>", req.headers['x-api-key']);
+  
   next();
 });
 
