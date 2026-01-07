@@ -28,17 +28,20 @@ app.use((req, res, next) => {
 
   const token = auth.replace('Bearer ', '').trim();
 
+  // ---- DIAGNOSTIC LOGS (kept) ----
+  console.log("ENV KEY >>>", API_KEY);
+  console.log("REQ AUTH >>>", auth);
+  console.log("REQ TOKEN >>>", token);
+  console.log("REQ X-API-KEY >>>", req.headers['x-api-key']);
+  // --------------------------------
+
   if (token !== API_KEY) {
     console.log("❌ Invalid API key:", token);
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
-  console.log("ENV KEY >>>", API_KEY);
-  console.log("REQ KEY >>>", req.headers['x-api-key']);
-  
+
   next();
 });
-
 
 // ==========================
 // CREATE CONTAINER
@@ -51,6 +54,13 @@ app.post('/containers', (req, res) => {
   }
 
   const name = `wa_${instanceId}`;
+
+  // -------------------------------------------------
+  // 🔥 FIX 1: auto-remove old container if it exists
+  // -------------------------------------------------
+  exec(`docker rm -f ${name}`, () => {
+    // ignore errors — container may not exist
+  });
 
   const cmd = `
 docker run -d \
