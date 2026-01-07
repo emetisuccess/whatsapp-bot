@@ -133,7 +133,138 @@ client.on('message', async (msg) => {
     const message = msg.body?.trim();
     if (!message) return;
 
-    // ---- keep your business logic here ----
+    const message = msg.body.trim();
+    const rawFrom = msg.author || msg.from; // Could be @lid or @c.us
+    const lidId = rawFrom; // Always use this as unique ID
+
+    try {
+        // Step 1: Handle DM staff registration
+        if (msg.body && msg.body.toUpperCase().startsWith("REGISTER STAFF")) {
+            const parts = msg.body.trim().split("-");
+            if (parts.length === 3) {
+                const staffName = parts[2];
+                const staffPhone = parts[1];
+
+                const contact = await msg.getContact();
+                const lidId = contact.id._serialized;
+
+                const payload = {
+                    lid: lidId,
+                    phone: staffPhone,
+                    name: staffName,
+                };
+
+                const response = await axios.post('https://elitegentessentials.com/api/map-staff', payload);
+
+                if (response.data && response.data.success) {
+                    const code = response.data.code;
+                    await msg.reply(`✅ Hi ${staffName}, you're almost done! Please copy this code and post it in the group:\n\n🔑 *${code}*`);
+                } else {
+                    await msg.reply(response.data.error);
+                }
+            } else {
+                await msg.reply('⚠️ Invalid format. Use: REGISTER STAFF-phone-name');
+            }
+        }
+
+        // Step 2: Detect unique code posted in group for final mapping
+        // Step 2: Detect unique code posted in group for final mapping
+        if (msg.body && msg.body.startsWith("UNIQUE_CODE_")) {
+            const code = msg.body.trim();
+
+            // Get sender's contact ID (not the group ID)
+            const senderId = msg.author || msg.from; // msg.author is available in group chats
+            // const contact = await client.getContactById(senderId);
+
+            const payload = {
+                code: code,
+                group_lid: msg.from,
+                lid: msg.author,
+                msg: msg,
+            };
+
+            try {
+                const res = await axios.post('https://elitegentessentials.com/api/map-staff-finalize', payload);
+
+                const responseMsg = res.data?.success
+                    ? '✅ You’ve been successfully registered!'
+                    : '❌ Could not complete your registration. Please try again or contact support.';
+
+                // Send DM to user directly
+                await client.sendMessage(res.data.sender_id, responseMsg);
+            } catch (error) {
+                console.error('Error verifying code:', error.message);
+                await client.sendMessage(senderId, '❌ Something went wrong while processing your registration.');
+            }
+        }
+
+
+   } catch (error) {
+        console.error('❌ Error in onMessage:', error.message);
+    }
+
+    // 2. Business owner adding group and agent
+    if (message.toUpperCase().startsWith('ADD GROUP TO CRM -')) {
+        if (!msg.from.includes('@g.us')) {
+            await msg.reply('❌ This command must be used **inside a group chat**.');
+            return;
+        }
+
+        const parts = message.split(' - ');
+        if (parts.length < 3) {
+            await msg.reply('⚠️ Invalid format. Use:\n\n*ADD GROUP TO CRM - Group Name - AgentPhone*');
+            return;
+        }
+
+        const groupName = parts[1].trim();
+        const agentPhoneRaw = parts[2].trim();
+        const agentPhone = agentPhoneRaw.replace(/\D/g, '');
+        const groupId = msg.from;
+        const senderPhone = msg.to;
+        const sender = msg.author;
+
+        if (!/^234\d{10}$/.test(agentPhone)) {
+            await msg.reply('❌ Invalid agent phone number. Must be in 234XXXXXXXXXX format.');
+            return;
+        }
+
+        console.log(`📥 Group mapping request by ${senderPhone} for group "${groupName}" and agent ${agentPhone}`);
+
+        try {
+            const res = await axios.post('https://elitegentessentials.com/api/map-group-agent', {
+                sender: sender,
+                group_id: groupId,
+                group_name: groupName,
+                agent_phone: agentPhone,
+            });
+
+            const data = res.data;
+            if (data.status === 'success') {
+                await msg.reply(data.message || '✅ Agent mapped to group successfully.');
+            } else {
+                await msg.reply(data.message || '⚠️ Unexpected response from server.');
+            }
+
+        } catch (err) {
+            console.error('❌ Group Mapping Error:', err.response?.data || err.message);
+
+            if (err.response) {
+                const errorData = err.response.data;
+                if (errorData.message) {
+                    await msg.reply(`❌ ${errorData.message}`);
+                } else if (errorData.errors) {
+                    const errorMessages = Object.values(errorData.errors).flat().join('\n');
+                    await msg.reply(`❌ Validation failed:\n${errorMessages}`);
+                } else {
+                    await msg.reply('❌ Failed to map group due to server error.');
+                }
+            } else {
+               // await msg.reply('❌ Network error or server unreachable.');
+            }
+        }
+
+        return;
+    }
 
   } catch (error) {
     console.error('❌ Error in onMessage:', error.message);
