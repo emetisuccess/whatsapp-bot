@@ -21,19 +21,18 @@ const BASE_IMAGE = 'whatsapp-service';
 app.use((req, res, next) => {
   const auth = req.headers['authorization'];
 
+  console.log("---- AUTH TRACE ----");
+  console.log("ENV KEY >>>", API_KEY);
+  console.log("REQ AUTH >>>", auth);
+  console.log("REQ X-API-KEY >>>", req.headers['x-api-key']);
+  console.log("--------------------");
+
   if (!auth) {
     console.log("❌ Missing Authorization header");
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const token = auth.replace('Bearer ', '').trim();
-
-  // ---- DIAGNOSTIC LOGS (kept) ----
-  console.log("ENV KEY >>>", API_KEY);
-  console.log("REQ AUTH >>>", auth);
-  console.log("REQ TOKEN >>>", token);
-  console.log("REQ X-API-KEY >>>", req.headers['x-api-key']);
-  // --------------------------------
 
   if (token !== API_KEY) {
     console.log("❌ Invalid API key:", token);
@@ -55,12 +54,10 @@ app.post('/containers', (req, res) => {
 
   const name = `wa_${instanceId}`;
 
-  // -------------------------------------------------
-  // 🔥 FIX 1: auto-remove old container if it exists
-  // -------------------------------------------------
-  exec(`docker rm -f ${name}`, () => {
-    // ignore errors — container may not exist
-  });
+  // --------------------------------
+  // remove old container if exists
+  // --------------------------------
+  exec(`docker rm -f ${name}`, () => {});
 
   const cmd = `
 docker run -d \
@@ -82,7 +79,7 @@ docker run -d \
       return res.status(500).json({ error: err.message });
     }
 
-    // wait a little before inspecting
+    // wait before inspecting ports
     setTimeout(() => getPorts(name, res), 1500);
   });
 });
@@ -115,6 +112,8 @@ function getPorts(name, res, attempt = 1) {
         const httpPort = ports["9000/tcp"][0].HostPort;
         const wsPort   = ports["9090/tcp"][0].HostPort;
 
+        console.log(`✅ Ports assigned → HTTP:${httpPort} WS:${wsPort}`);
+
         return res.json({
           container: name,
           httpPort,
@@ -132,19 +131,32 @@ function getPorts(name, res, attempt = 1) {
 }
 
 // ==========================
-// DELETE CONTAINER
+// DELETE CONTAINER (SAFE)
 // ==========================
 app.delete('/containers/:name', (req, res) => {
   const name = req.params.name;
 
-  exec(`docker stop ${name} && docker rm ${name}`, err => {
+  const cmd = `
+docker rm -f ${name}
+`;
+
+  exec(cmd, (err, stdout, stderr) => {
     if (err) {
       console.error("❌ Delete failed:", err.message);
+      console.error("STDERR:", stderr);
       return res.status(500).json({ error: err.message });
     }
 
+    console.log("✅ Deleted container:", name);
     res.json({ ok: true });
   });
+});
+
+// ==========================
+// HEALTH
+// ==========================
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'wa-orchestrator' });
 });
 
 // ==========================
