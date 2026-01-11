@@ -290,7 +290,7 @@ setTimeout(() => {
   cachingEnabled = false;
   logger.info("⌛ Caching window ended.");
   reactionCache.length = 0;
-}, 60 * 60 * 500);
+}, 60 * 5);
 
 // ================== SEND ORDER ==================
 app.post("/send-order", async (req, res) => {
