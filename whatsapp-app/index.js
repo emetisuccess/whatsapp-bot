@@ -17,6 +17,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const fetch = require('node-fetch');
 const winston = require('winston');
 const axios = require('axios');
+const PQueue = require('p-queue').default;
 
 // ================== CRASH SAFETY ==================
 process.on('unhandledRejection', err => {
@@ -25,6 +26,15 @@ process.on('unhandledRejection', err => {
 process.on('uncaughtException', err => {
   console.error('❌ Uncaught exception:', err);
 });
+
+// ================== SYSTEM STATE ==================
+const SYSTEM_STATE = {
+  STARTING: 'starting',
+  SYNCING: 'syncing',
+  READY: 'ready'
+};
+
+let systemState = SYSTEM_STATE.STARTING;
 
 // ================== APP SETUP ==================
 const app = express();
@@ -38,10 +48,6 @@ console.log(`🚀 Starting WhatsApp instance: ${INSTANCE_ID}`);
 // ================== STATE ==================
 let isClientReady = false;
 let latestQR = null;
-
-const reactionCache = [];
-let cachingEnabled = true;
-const errorLogBuffer = new Set();
 
 // ================== LOGGING ==================
 const logger = winston.createLogger({
@@ -58,21 +64,22 @@ const logger = winston.createLogger({
 });
 
 // ================== TELEGRAM ALERTS ==================
+const errorLogBuffer = new Set();
+
 async function sendTelegramAlert(message) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_USER_ID) return;
-
   try {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: TELEGRAM_USER_ID,
-        text: `🚨 *Error Alert from WhatsApp Server (${INSTANCE_ID})* 🚨\n\n${message}`,
+        text: `🚨 *WhatsApp Server (${INSTANCE_ID})* 🚨\n\n${message}`,
         parse_mode: 'Markdown'
       })
     });
   } catch (err) {
-    logger.warn("⚠️ Failed to send Telegram alert:", err.message);
+    logger.warn("⚠️ Telegram alert failed:", err.message);
   }
 }
 
@@ -82,13 +89,62 @@ function logAndBufferError(label, error) {
   errorLogBuffer.add(msg);
 }
 
-// Batch error alerts
 setInterval(() => {
-  if (errorLogBuffer.size === 0) return;
-  const batchedMsg = Array.from(errorLogBuffer).join('\n\n').slice(0, 4000);
-  sendTelegramAlert(batchedMsg);
+  if (!errorLogBuffer.size) return;
+  const batched = Array.from(errorLogBuffer).join('\n\n').slice(0, 4000);
+  sendTelegramAlert(batched);
   errorLogBuffer.clear();
 }, ERROR_BATCH_INTERVAL);
+
+// ================== API CLIENT ==================
+const apiClient = axios.create({
+  timeout: 10000
+});
+
+// ================== API QUEUE ==================
+const apiQueue = new PQueue({
+  concurrency: 2,
+  interval: 1000,
+  intervalCap: 10
+});
+
+// ================== CIRCUIT BREAKER ==================
+let crmFailures = 0;
+let crmBlockedUntil = 0;
+
+function canCallCRM() {
+  return Date.now() >= crmBlockedUntil;
+}
+
+function recordCRMFailure() {
+  crmFailures++;
+  if (crmFailures >= 5) {
+    crmBlockedUntil = Date.now() + 2 * 60 * 1000;
+    crmFailures = 0;
+    logger.warn("🚫 CRM temporarily blocked");
+  }
+}
+
+function recordCRMSuccess() {
+  crmFailures = 0;
+}
+
+// ================== SAFE API CALL ==================
+async function safeApiCall(fn) {
+  if (!canCallCRM()) {
+    logger.warn("Skipping CRM call – breaker open");
+    return null;
+  }
+
+  try {
+    const res = await apiQueue.add(fn);
+    recordCRMSuccess();
+    return res;
+  } catch (err) {
+    recordCRMFailure();
+    throw err;
+  }
+}
 
 // ================== WHATSAPP CLIENT ==================
 const client = new Client({
@@ -108,9 +164,9 @@ client.on('qr', (qr) => {
   logger.info('QR Code generated');
   qrcode.generate(qr, { small: true });
 
-  wss.clients.forEach(wsClient => {
-    if (wsClient.readyState === WebSocket.OPEN) {
-      wsClient.send(qr);
+  wss.clients.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(qr);
     }
   });
 });
@@ -119,19 +175,27 @@ client.on('qr', (qr) => {
 client.on('ready', () => {
   isClientReady = true;
   latestQR = null;
-  logger.info('WhatsApp Client is Ready');
+  systemState = SYSTEM_STATE.SYNCING;
+
+  logger.info('WhatsApp ready – entering SYNCING mode');
+
+  // warm-up window
+  setTimeout(() => {
+    systemState = SYSTEM_STATE.READY;
+    logger.info('✅ System is now READY');
+  }, 5 * 60 * 1000);
 });
 
-// ================== GROUP EVENTS ==================
-client.on('group_join', (notification) => {
-  logger.info('User joined group', { group: notification.chatId });
-  notification.reply('Hi, welcome and thank you for joining us.');
-});
+// ================== COMMAND ALLOWLIST ==================
+const ALLOWED_COMMANDS = [
+  /^REGISTER STAFF/i,
+  /^UNIQUE_CODE_/i,
+  /^ADD GROUP TO CRM/i
+];
 
-client.on('group_leave', (notification) => {
-  logger.info('User left group', { group: notification.chatId });
-  notification.reply('Who has left us o?');
-});
+function isAllowedCommand(text) {
+  return ALLOWED_COMMANDS.some(rgx => rgx.test(text));
+}
 
 // ================== MESSAGE HANDLER ==================
 client.on('message', async (msg) => {
@@ -139,68 +203,65 @@ client.on('message', async (msg) => {
     const text = msg.body?.trim();
     if (!text) return;
 
-    const rawFrom = msg.author || msg.from;
-    const lidId = rawFrom;
+    // 🚧 SYNC GATE
+    if (systemState !== SYSTEM_STATE.READY) {
+      if (!isAllowedCommand(text)) {
+        logger.info(`⏳ Ignored during sync: ${text.slice(0, 40)}`);
+        return;
+      }
+    }
 
-    // ==========================
-    // STAFF REGISTRATION
-    // ==========================
+    const rawFrom = msg.author || msg.from;
+
+    // ================= STAFF REGISTRATION =================
     if (text.toUpperCase().startsWith("REGISTER STAFF")) {
       const parts = text.split("-");
-      if (parts.length === 3) {
-        const staffName = parts[2];
-        const staffPhone = parts[1];
+      if (parts.length !== 3) {
+        await msg.reply('⚠️ Use: REGISTER STAFF-phone-name');
+        return;
+      }
 
-        const contact = await msg.getContact();
-        const lid = contact.id._serialized;
+      const staffPhone = parts[1];
+      const staffName = parts[2];
+      const contact = await msg.getContact();
+      const lid = contact.id._serialized;
 
-        const payload = { lid, phone: staffPhone, name: staffName };
+      try {
+        const res = await safeApiCall(() =>
+          apiClient.post('https://elitegentessentials.com/api/map-staff', {
+            lid, phone: staffPhone, name: staffName
+          })
+        );
 
-        try {
-          const response = await axios.post(
-            'https://elitegentessentials.com/api/map-staff',
-            payload
+        if (res?.data?.success) {
+          await msg.reply(
+            `✅ Hi ${staffName}, post this code in the group:\n\n🔑 *${res.data.code}*`
           );
-
-          if (response.data?.success) {
-            const code = response.data.code;
-            await msg.reply(
-              `✅ Hi ${staffName}, you're almost done!\nPost this code in the group:\n\n🔑 *${code}*`
-            );
-          } else {
-            await msg.reply(response.data?.error || 'Registration failed');
-          }
-        } catch (e) {
-          await msg.reply('❌ Error processing registration.');
+        } else {
+          await msg.reply(res?.data?.error || 'Registration failed');
         }
-      } else {
-        await msg.reply('⚠️ Invalid format. Use: REGISTER STAFF-phone-name');
+      } catch {
+        await msg.reply('❌ Error processing registration.');
       }
       return;
     }
 
-    // ==========================
-    // UNIQUE CODE FINALIZE
-    // ==========================
+    // ================= UNIQUE CODE =================
     if (text.startsWith("UNIQUE_CODE_")) {
-      const payload = {
-        code: text,
-        group_lid: msg.from,
-        lid: msg.author,
-      };
-
       try {
-        const res = await axios.post(
-          'https://elitegentessentials.com/api/map-staff-finalize',
-          payload
+        const res = await safeApiCall(() =>
+          apiClient.post(
+            'https://elitegentessentials.com/api/map-staff-finalize',
+            { code: text, group_lid: msg.from, lid: msg.author }
+          )
         );
 
-        const responseMsg = res.data?.success
+        const reply = res?.data?.success
           ? '✅ You’ve been successfully registered!'
           : '❌ Registration failed.';
 
-        await client.sendMessage(res.data.sender_id, responseMsg);
-      } catch (error) {
+        await client.sendMessage(res?.data?.sender_id || msg.from, reply);
+      } catch {
         await client.sendMessage(
           msg.author || msg.from,
           '❌ Error finalizing registration.'
@@ -209,20 +270,16 @@ client.on('message', async (msg) => {
       return;
     }
 
-    // ==========================
-    // ADD GROUP TO CRM
-    // ==========================
+    // ================= ADD GROUP =================
     if (text.toUpperCase().startsWith('ADD GROUP TO CRM -')) {
       if (!msg.from.includes('@g.us')) {
-        await msg.reply('❌ This command must be used inside a group.');
+        await msg.reply('❌ Must be used in a group.');
         return;
       }
 
       const parts = text.split(' - ');
       if (parts.length < 3) {
-        await msg.reply(
-          '⚠️ Use:\nADD GROUP TO CRM - Group Name - AgentPhone'
-        );
+        await msg.reply('⚠️ ADD GROUP TO CRM - Group Name - AgentPhone');
         return;
       }
 
@@ -232,70 +289,54 @@ client.on('message', async (msg) => {
       const sender = msg.author;
 
       if (!/^234\d{10}$/.test(agentPhone)) {
-        await msg.reply('❌ Invalid phone format: 234XXXXXXXXXX');
+        await msg.reply('❌ Invalid phone: 234XXXXXXXXXX');
         return;
       }
 
       try {
-        const res = await axios.post(
-          'https://elitegentessentials.com/api/map-group-agent',
-          {
-            sender,
-            group_id: groupId,
-            group_name: groupName,
-            agent_phone: agentPhone,
-          }
+        const res = await safeApiCall(() =>
+          apiClient.post(
+            'https://elitegentessentials.com/api/map-group-agent',
+            { sender, group_id: groupId, group_name: groupName, agent_phone: agentPhone }
+          )
         );
 
-        await msg.reply(
-          res.data?.message || '✅ Agent mapped to group successfully.'
-        );
-
-      } catch (err) {
+        await msg.reply(res?.data?.message || '✅ Agent mapped.');
+      } catch {
         await msg.reply('❌ Failed to map group.');
       }
-
       return;
     }
 
   } catch (error) {
-    console.error('❌ Error in onMessage:', error);
+    logAndBufferError("Error in message handler", error);
   }
 });
 
 // ================== MESSAGE REACTION ==================
 client.on('message_reaction', async (reaction) => {
-  if (cachingEnabled) {
-    reactionCache.push(reaction);
-    return;
-  }
+  // ignore until fully ready
+  if (systemState !== SYSTEM_STATE.READY) return;
 
   try {
     const msg = await client.getMessageById(reaction.msgId._serialized);
     if (!msg?.body) return;
 
-    await fetch("https://elitegentessentials.com/api/checkReaction", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg._data, reaction })
-    });
-
+    await safeApiCall(() =>
+      apiClient.post(
+        "https://elitegentessentials.com/api/checkReaction",
+        { message: msg._data, reaction }
+      )
+    );
   } catch (err) {
-    logAndBufferError("Unhandled error in message_reaction", err);
+    logAndBufferError("Error in message_reaction", err);
   }
 });
-
-// ================== CACHE FLUSH ==================
-setTimeout(() => {
-  cachingEnabled = false;
-  logger.info("⌛ Caching window ended.");
-  reactionCache.length = 0;
-}, 60 * 5);
 
 // ================== SEND ORDER ==================
 app.post("/send-order", async (req, res) => {
   if (!isClientReady) {
-    return res.status(503).json({ error: "WhatsApp client is not ready." });
+    return res.status(503).json({ error: "WhatsApp client not ready." });
   }
 
   try {
@@ -303,7 +344,7 @@ app.post("/send-order", async (req, res) => {
     const result = await client.sendMessage(channel, order);
     res.json(result);
   } catch (error) {
-    logAndBufferError("Error sending WhatsApp order", error);
+    logAndBufferError("Error sending order", error);
     res.status(500).json({ error: "Failed to send order" });
   }
 });
@@ -314,9 +355,9 @@ app.get('/qr', (req, res) => {
   res.json({ status: 'qr', qr: latestQR, instance: INSTANCE_ID });
 });
 
-// ================== STATUS ENDPOINT ==================
+// ================== STATUS ==================
 app.get('/status', (req, res) => {
-  res.json({ ready: isClientReady, instance: INSTANCE_ID });
+  res.json({ ready: isClientReady, state: systemState, instance: INSTANCE_ID });
 });
 
 // ================== HEALTH ==================
