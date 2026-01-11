@@ -17,7 +17,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const fetch = require('node-fetch');
 const winston = require('winston');
 const axios = require('axios');
-const PQueue = require('p-queue').default;
+const PQueue = require('p-queue');
 
 // ================== CRASH SAFETY ==================
 process.on('unhandledRejection', err => {
