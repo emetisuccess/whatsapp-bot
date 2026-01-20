@@ -1,15 +1,18 @@
 FROM node:18-slim
 
-# install curl
+# Install curl + CA certs
 RUN apt-get update && apt-get install -y curl ca-certificates gnupg
 
-# install official docker cli
+# Install Docker CLI (orchestrator needs docker command, uses host docker.sock)
 RUN curl -fsSL https://get.docker.com | sh
 
 WORKDIR /app
 COPY orchestrator.js .
 
-RUN npm install express
+# Install deps (express + axios)
+RUN npm init -y \
+  && npm install express axios \
+  && npm cache clean --force
 
 EXPOSE 7070
 CMD ["node", "orchestrator.js"]
