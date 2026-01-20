@@ -8,7 +8,7 @@ services:
     ports:
       - "7070:7070"
     environment:
-      ORCH_KEY: "REPLACE_WITH_YOUR_KEY"
+      ORCH_KEY: "P+Zt3wG...EKSJz/NlT8="
       WA_NETWORK: "wa-net"
       WA_IMAGE: "whatsapp-service:latest"
       INTERNAL_TIMEOUT_MS: "15000"
