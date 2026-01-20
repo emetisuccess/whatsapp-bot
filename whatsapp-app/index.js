@@ -340,14 +340,52 @@ app.post("/send-order", async (req, res) => {
   }
 
   try {
-    const { channel, order } = req.body;
-    const result = await client.sendMessage(channel, order);
-    res.json(result);
+    let { channel, order, channel_type } = req.body || {};
+
+    channel = typeof channel === "string" ? channel.trim() : "";
+    order = typeof order === "string" ? order.trim() : "";
+    channel_type = typeof channel_type === "string" ? channel_type.trim().toLowerCase() : "";
+
+    if (!channel || !order) {
+      return res.status(400).json({ error: "channel and order are required" });
+    }
+
+    // If it's already a WhatsApp ID, do not modify
+    const isWid = channel.includes("@c.us") || channel.includes("@g.us");
+
+    if (!isWid) {
+      // If CRM passes raw phone numbers, they can only represent a DM.
+      // Groups are not "numeric-only" IDs.
+      if (/^\d{10,15}$/.test(channel)) {
+        if (channel_type === "group") {
+          return res.status(400).json({
+            error: "Invalid channel: group messages require a @g.us chat id",
+            hint: "Pass channel as the full group id like 1203...@g.us (not a phone number)."
+          });
+        }
+
+        // default DM
+        channel = `${channel}@c.us`;
+      } else {
+        // not numeric, not a wid => reject (prevents silent failures)
+        return res.status(400).json({
+          error: "Invalid channel format",
+          hint: "Use a full WhatsApp chat id like 234...@c.us or 1203...@g.us"
+        });
+      }
+    }
+
+    // Workaround for WhatsApp Web changes that break sendSeen/markedUnread in some versions
+    const result = await client.sendMessage(channel, order, { sendSeen: false });
+
+    return res.json({ ok: true, to: channel, result });
+
   } catch (error) {
     logAndBufferError("Error sending order", error);
-    res.status(500).json({ error: "Failed to send order" });
+    return res.status(500).json({ error: "Failed to send order" });
   }
 });
+
 
 // ================== QR ENDPOINT ==================
 app.get('/qr', (req, res) => {
