@@ -3,11 +3,12 @@ version: "3.8"
 services:
   orchestrator:
     build: ./orchestrator
+    image: wa-orchestrator:latest
     container_name: wa-orchestrator
     ports:
       - "7070:7070"
     environment:
-      ORCH_KEY: "P+Zt3wG...EKSJz/NlT8="
+      ORCH_KEY: "REPLACE_WITH_YOUR_KEY"
       WA_NETWORK: "wa-net"
       WA_IMAGE: "whatsapp-service:latest"
       INTERNAL_TIMEOUT_MS: "15000"
@@ -16,13 +17,6 @@ services:
     networks:
       - wa-net
     restart: unless-stopped
-
-  # Build only: used to build whatsapp-service image; not run as a service
-  whatsapp-builder:
-    build: ./whatsapp-app
-    image: whatsapp-service:latest
-    deploy:
-      replicas: 0
 
 networks:
   wa-net:
