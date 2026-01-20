@@ -1,9 +1,6 @@
 version: "3.8"
 
 services:
-  # ============================
-  # ORCHESTRATOR
-  # ============================
   orchestrator:
     build: ./orchestrator
     container_name: wa-orchestrator
@@ -11,16 +8,23 @@ services:
       - "7070:7070"
     environment:
       ORCH_KEY: "P+Zt3wG...EKSJz/NlT8="
+      WA_NETWORK: "wa-net"
+      WA_IMAGE: "whatsapp-service:latest"
+      INTERNAL_TIMEOUT_MS: "15000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - wa-net
     restart: unless-stopped
 
-  # ============================
-  # WHATSAPP IMAGE BUILDER ONLY
-  # (never runs as a container)
-  # ============================
+  # Build only: used to build whatsapp-service image; not run as a service
   whatsapp-builder:
     build: ./whatsapp-app
-    image: whatsapp-service
+    image: whatsapp-service:latest
     deploy:
       replicas: 0
+
+networks:
+  wa-net:
+    external: true
+    name: wa-net
