@@ -2,7 +2,7 @@
  * Option A Orchestrator
  * - CRM talks ONLY to this orchestrator on :7070
  * - Orchestrator creates WhatsApp containers on an internal docker network (wa-net)
- * - NO host port publishing for WhatsApp containers (no -p 0:9000 etc)
+ * - NO host port publishing for WhatsApp containers
  * - Orchestrator proxies: /instances/:id/qr, /status, /send-order
  */
 
@@ -17,7 +17,7 @@ app.use(express.json());
 // CONFIG
 // ==========================
 const ORCH_PORT = 7070;
-const BASE_IMAGE = process.env.WA_IMAGE || "whatsapp-service";
+const BASE_IMAGE = process.env.WA_IMAGE || "whatsapp-service:latest";
 const DOCKER_NETWORK = process.env.WA_NETWORK || "wa-net";
 const INTERNAL_HTTP_PORT = 9000;
 
@@ -48,9 +48,6 @@ function ensureNetwork(cb) {
 }
 
 function getTokenFromReq(req) {
-  // Accept either:
-  // 1) Authorization: Bearer <key>
-  // 2) x-api-key: <key>
   const auth = req.headers["authorization"];
   if (auth && typeof auth === "string") {
     return auth.replace("Bearer", "").trim();
@@ -60,11 +57,20 @@ function getTokenFromReq(req) {
   return null;
 }
 
+function safeId(id) {
+  return String(id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
 function safeContainerName(instanceId) {
-  // we will name containers: wa_<instanceId>
-  // instanceId must be simple so it doesn't break shell commands
-  const cleaned = String(instanceId).replace(/[^a-zA-Z0-9_-]/g, "");
+  const cleaned = safeId(instanceId);
   return `wa_${cleaned}`;
+}
+
+function safeVolumeName(instanceId) {
+  // Docker volume names allow [a-zA-Z0-9][a-zA-Z0-9_.-]
+  // We'll be extra safe and use only [a-zA-Z0-9_.-]
+  const cleaned = String(instanceId || "").replace(/[^a-zA-Z0-9_.-]/g, "");
+  return `wa_sessions_${cleaned}`;
 }
 
 function internalUrl(instanceId, path) {
@@ -79,11 +85,7 @@ function internalUrl(instanceId, path) {
 app.use((req, res, next) => {
   const token = getTokenFromReq(req);
 
-  if (!token) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  if (token !== API_KEY) {
+  if (!token || token !== API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -94,7 +96,14 @@ app.use((req, res, next) => {
 // HEALTH
 // ==========================
 app.get("/", (req, res) => {
-  res.json({ ok: true, service: "wa-orchestrator", network: DOCKER_NETWORK });
+  res.json({ ok: true, service: "wa-orchestrator", network: DOCKER_NETWORK, image: BASE_IMAGE });
+});
+
+// Debug: show orchestrator docker networks (helps when DNS fails)
+app.get("/debug/net", (req, res) => {
+  sh(`cat /etc/hostname && echo && ip a && echo && cat /etc/resolv.conf`, (err, out, stderr) => {
+    return res.json({ ok: !err, out, stderr });
+  });
 });
 
 // ==========================
@@ -108,6 +117,7 @@ app.post("/containers", (req, res) => {
   }
 
   const name = safeContainerName(instanceId);
+  const volume = safeVolumeName(instanceId);
 
   ensureNetwork((netErr) => {
     if (netErr) {
@@ -115,7 +125,6 @@ app.post("/containers", (req, res) => {
       return res.status(500).json({ error: netErr.message });
     }
 
-    // Remove any old container first, then run new one (avoid race)
     sh(`docker rm -f ${name} >/dev/null 2>&1 || true`, () => {
       const cmd = `
 docker run -d \
@@ -126,7 +135,7 @@ docker run -d \
   -e HTTP_PORT=9000 \
   -e WS_PORT=9090 \
   -e SESSION_PATH=/sessions \
-  -v wa_sessions_${instanceId}:/sessions \
+  -v ${volume}:/sessions \
   ${BASE_IMAGE}
 `.trim();
 
@@ -134,7 +143,7 @@ docker run -d \
         if (err) {
           console.error("❌ Docker run failed:", err.message);
           console.error("STDERR:", stderr);
-          return res.status(500).json({ error: err.message });
+          return res.status(500).json({ error: err.message, stderr });
         }
 
         return res.json({
@@ -152,7 +161,7 @@ docker run -d \
 // DELETE CONTAINER (SAFE)
 // ==========================
 app.delete("/containers/:name", (req, res) => {
-  const name = String(req.params.name || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const name = safeId(req.params.name);
   if (!name) return res.status(400).json({ error: "name required" });
 
   sh(`docker rm -f ${name}`, (err, stdout, stderr) => {
@@ -173,9 +182,7 @@ app.get("/instances/:instanceId/qr", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.get(internalUrl(instanceId, "/qr"), {
-      timeout: INTERNAL_TIMEOUT_MS,
-    });
+    const r = await axios.get(internalUrl(instanceId, "/qr"), { timeout: INTERNAL_TIMEOUT_MS });
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
@@ -195,9 +202,7 @@ app.get("/instances/:instanceId/status", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.get(internalUrl(instanceId, "/status"), {
-      timeout: INTERNAL_TIMEOUT_MS,
-    });
+    const r = await axios.get(internalUrl(instanceId, "/status"), { timeout: INTERNAL_TIMEOUT_MS });
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
