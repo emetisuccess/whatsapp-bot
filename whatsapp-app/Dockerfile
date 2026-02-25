@@ -1,6 +1,6 @@
 FROM node:18-slim
 
-# Install Chromium deps for whatsapp-web.js
+# Install Chromium and required dependencies
 RUN apt-get update && apt-get install -y \
   chromium \
   ca-certificates \
@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
+
 COPY package*.json ./
 RUN npm install --production
 
@@ -29,4 +30,4 @@ COPY . .
 
 EXPOSE 9000 9090
 
-CMD ["npm", "start"]
+CMD ["node", "index.js"]
