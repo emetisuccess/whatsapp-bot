@@ -5,6 +5,15 @@ services:
     build:
       context: ./whatsapp-app
     image: whatsapp-service:latest
+    container_name: whatsapp-service
+    restart: unless-stopped
+    shm_size: 1gb
+    volumes:
+      - ./sessions:/app/sessions
+    environment:
+      - SESSION_PATH=/app/sessions
+    networks:
+      - wa-net
 
   orchestrator:
     build:
