@@ -196,6 +196,18 @@ client.on('ready', () => {
   }, 5 * 60 * 1000);
 });
 
+client.on('auth_failure', msg => {
+  console.log('AUTH FAILURE:', msg);
+});
+
+client.on('loading_screen', (percent, message) => {
+  console.log('LOADING:', percent, message);
+});
+
+client.on('disconnected', reason => {
+  console.log('DISCONNECTED:', reason);
+});
+
 // ================== COMMAND ALLOWLIST ==================
 const ALLOWED_COMMANDS = [
   /^REGISTER STAFF/i,
