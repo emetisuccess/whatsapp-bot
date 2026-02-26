@@ -1,7 +1,7 @@
 /**
- * Option A Orchestrator
+ * Option A Orchestrator (Corrected)
  * - CRM talks ONLY to this orchestrator on :7070
- * - Orchestrator creates WhatsApp containers on an internal docker network (wa-net)
+ * - Orchestrator creates WhatsApp containers on internal docker network (wa-net)
  * - NO host port publishing for WhatsApp containers
  * - Orchestrator proxies: /instances/:id/qr, /status, /send-order
  */
@@ -33,7 +33,9 @@ const INTERNAL_TIMEOUT_MS = Number(process.env.INTERNAL_TIMEOUT_MS || 15000);
 // HELPERS
 // ==========================
 function sh(cmd, cb) {
-  exec(cmd, (err, stdout, stderr) => cb(err, stdout, stderr));
+  exec(cmd, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    cb(err, stdout, stderr);
+  });
 }
 
 function ensureNetwork(cb) {
@@ -67,8 +69,6 @@ function safeContainerName(instanceId) {
 }
 
 function safeVolumeName(instanceId) {
-  // Docker volume names allow [a-zA-Z0-9][a-zA-Z0-9_.-]
-  // We'll be extra safe and use only [a-zA-Z0-9_.-]
   const cleaned = String(instanceId || "").replace(/[^a-zA-Z0-9_.-]/g, "");
   return `wa_sessions_${cleaned}`;
 }
@@ -84,11 +84,9 @@ function internalUrl(instanceId, path) {
 // ==========================
 app.use((req, res, next) => {
   const token = getTokenFromReq(req);
-
   if (!token || token !== API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-
   next();
 });
 
@@ -96,13 +94,11 @@ app.use((req, res, next) => {
 // HEALTH
 // ==========================
 app.get("/", (req, res) => {
-  res.json({ ok: true, service: "wa-orchestrator", network: DOCKER_NETWORK, image: BASE_IMAGE });
-});
-
-// Debug: show orchestrator docker networks (helps when DNS fails)
-app.get("/debug/net", (req, res) => {
-  sh(`cat /etc/hostname && echo && ip a && echo && cat /etc/resolv.conf`, (err, out, stderr) => {
-    return res.json({ ok: !err, out, stderr });
+  res.json({
+    ok: true,
+    service: "wa-orchestrator",
+    network: DOCKER_NETWORK,
+    image: BASE_IMAGE,
   });
 });
 
@@ -126,11 +122,13 @@ app.post("/containers", (req, res) => {
     }
 
     sh(`docker rm -f ${name} >/dev/null 2>&1 || true`, () => {
+
       const cmd = `
 docker run -d \
   --restart unless-stopped \
   --name ${name} \
   --network ${DOCKER_NETWORK} \
+  --shm-size=1g \
   -e INSTANCE_ID=${instanceId} \
   -e HTTP_PORT=9000 \
   -e WS_PORT=9090 \
@@ -150,7 +148,7 @@ docker run -d \
           ok: true,
           container: name,
           instanceId,
-          note: "No host ports published. Use /instances/:instanceId/* endpoints on orchestrator.",
+          note: "Container created with 1GB shared memory.",
         });
       });
     });
@@ -158,7 +156,7 @@ docker run -d \
 });
 
 // ==========================
-// DELETE CONTAINER (SAFE)
+// DELETE CONTAINER
 // ==========================
 app.delete("/containers/:name", (req, res) => {
   const name = safeId(req.params.name);
@@ -182,7 +180,9 @@ app.get("/instances/:instanceId/qr", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.get(internalUrl(instanceId, "/qr"), { timeout: INTERNAL_TIMEOUT_MS });
+    const r = await axios.get(internalUrl(instanceId, "/qr"), {
+      timeout: INTERNAL_TIMEOUT_MS,
+    });
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
@@ -202,7 +202,9 @@ app.get("/instances/:instanceId/status", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.get(internalUrl(instanceId, "/status"), { timeout: INTERNAL_TIMEOUT_MS });
+    const r = await axios.get(internalUrl(instanceId, "/status"), {
+      timeout: INTERNAL_TIMEOUT_MS,
+    });
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
@@ -222,9 +224,11 @@ app.post("/instances/:instanceId/send-order", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.post(internalUrl(instanceId, "/send-order"), req.body, {
-      timeout: INTERNAL_TIMEOUT_MS,
-    });
+    const r = await axios.post(
+      internalUrl(instanceId, "/send-order"),
+      req.body,
+      { timeout: INTERNAL_TIMEOUT_MS }
+    );
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
