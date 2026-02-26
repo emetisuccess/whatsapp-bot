@@ -158,11 +158,9 @@ const client = new Client({
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--single-process',
       '--disable-gpu'
     ]
   },
@@ -170,6 +168,16 @@ const client = new Client({
     clientId: INSTANCE_ID,
     dataPath: SESSION_PATH
   })
+});
+
+client.on('browser_created', async (browser) => {
+  const pages = await browser.pages();
+  const page = pages[0];
+  if (page) {
+    await page.setUserAgent(
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+    );
+  }
 });
 
 // ================== QR HANDLER ==================
