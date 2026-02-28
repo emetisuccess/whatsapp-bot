@@ -18,6 +18,7 @@ const fetch = require('node-fetch');
 const winston = require('winston');
 const axios = require('axios');
 const PQueue = require('p-queue').default;
+const fs = require('fs');                 // <-- IMPORTANT: moved to top
 
 // ================== CRASH SAFETY ==================
 process.on('unhandledRejection', err => {
@@ -146,13 +147,6 @@ async function safeApiCall(fn) {
   }
 }
 
-const sessionDir = `${SESSION_PATH}/${INSTANCE_ID}`;
-if (fs.existsSync(sessionDir)) {
-  logger.info(`📁 Session directory exists: ${sessionDir}`);
-} else {
-  logger.info(`📁 No existing session for ${INSTANCE_ID}`);
-}
-
 // ================== WHATSAPP CLIENT ==================
 const client = new Client({
   puppeteer: {
@@ -169,20 +163,13 @@ const client = new Client({
   })
 });
 
-client.on('browser_created', async (browser) => {
-  const pages = await browser.pages();
-  const page = pages[0];
-  if (page) {
-    await page.setUserAgent(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
-    );
-  }
-});
+// (Optional) You can remove browser_created entirely – the library sets a good user agent
+// client.on('browser_created', async (browser) => { ... });
 
 // ================== QR HANDLER ==================
 client.on('qr', (qr) => {
   latestQR = qr;
-  logger.info('QR Code generated');
+  logger.info('📲 QR Code generated');
   qrcode.generate(qr, { small: true });
 
   wss.clients.forEach(ws => {
@@ -192,46 +179,43 @@ client.on('qr', (qr) => {
   });
 });
 
+// ================== AUTHENTICATION EVENTS ==================
+client.on('authenticated', () => {
+  logger.info('✅ Authenticated successfully');
+});
+
+client.on('auth_failure', msg => {
+  logger.error('❌ Authentication failure:', msg);
+  errorLogBuffer.add(`Auth failure: ${msg}`);
+});
+
+// ================== LOADING SCREEN ==================
+client.on('loading_screen', (percent, message) => {
+  logger.info(`⏳ Loading: ${percent}% - ${message}`);
+});
+
 // ================== READY ==================
 client.on('ready', () => {
   isClientReady = true;
   latestQR = null;
   systemState = SYSTEM_STATE.SYNCING;
 
-  logger.info('WhatsApp ready – entering SYNCING mode');
+  logger.info('🎉 WhatsApp ready – entering SYNCING mode');
 
-  // warm-up window
+  // Warm-up window before allowing commands
   setTimeout(() => {
     systemState = SYSTEM_STATE.READY;
     logger.info('✅ System is now READY');
   }, 5 * 60 * 1000);
 });
 
-client.on('auth_failure', msg => {
-  console.log('AUTH FAILURE:', msg);
-});
-
-client.on('loading_screen', (percent, message) => {
-  console.log('LOADING:', percent, message);
-});
-
-client.on('disconnected', reason => {
-  console.log('DISCONNECTED:', reason);
-});
-
-client.on('authenticated', () => {
-  logger.info('✅ Authenticated successfully');
-});
-
-client.on('loading_screen', (percent, message) => {
-  logger.info(`Loading: ${percent}% - ${message}`);
-});
-
+// ================== DISCONNECTED ==================
 client.on('disconnected', (reason) => {
   logger.warn('⚠️ Client disconnected:', reason);
   isClientReady = false;
   systemState = SYSTEM_STATE.STARTING;
-  // Optionally attempt to reinitialize after a delay
+  // Optionally reinitialize after a delay:
+  // setTimeout(() => client.initialize(), 10000);
 });
 
 // ================== COMMAND ALLOWLIST ==================
@@ -403,7 +387,6 @@ app.post("/send-order", async (req, res) => {
 
     if (!isWid) {
       // If CRM passes raw phone numbers, they can only represent a DM.
-      // Groups are not "numeric-only" IDs.
       if (/^\d{10,15}$/.test(channel)) {
         if (channel_type === "group") {
           return res.status(400).json({
@@ -411,11 +394,9 @@ app.post("/send-order", async (req, res) => {
             hint: "Pass channel as the full group id like 1203...@g.us (not a phone number)."
           });
         }
-
         // default DM
         channel = `${channel}@c.us`;
       } else {
-        // not numeric, not a wid => reject (prevents silent failures)
         return res.status(400).json({
           error: "Invalid channel format",
           hint: "Use a full WhatsApp chat id like 234...@c.us or 1203...@g.us"
@@ -423,9 +404,7 @@ app.post("/send-order", async (req, res) => {
       }
     }
 
-    // Workaround for WhatsApp Web changes that break sendSeen/markedUnread in some versions
     const result = await client.sendMessage(channel, order, { sendSeen: false });
-
     return res.json({ ok: true, to: channel, result });
 
   } catch (error) {
@@ -433,7 +412,6 @@ app.post("/send-order", async (req, res) => {
     return res.status(500).json({ error: "Failed to send order" });
   }
 });
-
 
 // ================== QR ENDPOINT ==================
 app.get('/qr', (req, res) => {
@@ -460,14 +438,13 @@ app.listen(HTTP_PORT, () =>
   logger.info(`HTTP running on ${HTTP_PORT}`)
 );
 
-// ================== INIT ==================
-
-const fs = require('fs');
+// ================== CHECK SESSION DIRECTORY ==================
 const sessionDir = `${SESSION_PATH}/${INSTANCE_ID}`;
 if (fs.existsSync(sessionDir)) {
-  logger.info(`Session directory exists: ${sessionDir}`);
+  logger.info(`📁 Session directory exists: ${sessionDir}`);
 } else {
-  logger.info(`No existing session for ${INSTANCE_ID}`);
+  logger.info(`📁 No existing session for ${INSTANCE_ID}`);
 }
 
+// ================== INIT ==================
 client.initialize();
