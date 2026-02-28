@@ -215,6 +215,10 @@ client.on('authenticated', () => {
   logger.info('✅ Authenticated successfully');
 });
 
+client.on('loading_screen', (percent, message) => {
+  logger.info(`Loading: ${percent}% - ${message}`);
+});
+
 client.on('disconnected', (reason) => {
   logger.warn('⚠️ Client disconnected:', reason);
   isClientReady = false;
