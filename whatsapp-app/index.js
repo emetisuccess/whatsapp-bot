@@ -211,6 +211,17 @@ client.on('disconnected', reason => {
   console.log('DISCONNECTED:', reason);
 });
 
+client.on('authenticated', () => {
+  logger.info('✅ Authenticated successfully');
+});
+
+client.on('disconnected', (reason) => {
+  logger.warn('⚠️ Client disconnected:', reason);
+  isClientReady = false;
+  systemState = SYSTEM_STATE.STARTING;
+  // Optionally attempt to reinitialize after a delay
+});
+
 // ================== COMMAND ALLOWLIST ==================
 const ALLOWED_COMMANDS = [
   /^REGISTER STAFF/i,
