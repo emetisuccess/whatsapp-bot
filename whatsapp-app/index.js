@@ -146,6 +146,13 @@ async function safeApiCall(fn) {
   }
 }
 
+const sessionDir = `${SESSION_PATH}/${INSTANCE_ID}`;
+if (fs.existsSync(sessionDir)) {
+  logger.info(`📁 Session directory exists: ${sessionDir}`);
+} else {
+  logger.info(`📁 No existing session for ${INSTANCE_ID}`);
+}
+
 // ================== WHATSAPP CLIENT ==================
 const client = new Client({
   puppeteer: {
