@@ -149,6 +149,7 @@ async function safeApiCall(fn) {
 // ================== WHATSAPP CLIENT ==================
 const client = new Client({
   puppeteer: {
+    timeout: 60000,
     headless: true,
     args: [
       '--no-sandbox',
