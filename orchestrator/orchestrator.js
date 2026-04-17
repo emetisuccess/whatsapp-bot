@@ -49,6 +49,18 @@ function ensureNetwork(cb) {
   });
 }
 
+function ensureImage(cb) {
+  sh(`docker image inspect ${BASE_IMAGE} >/dev/null 2>&1`, (err) => {
+    if (!err) return cb(null);
+
+    const missingImageError = new Error(
+      `Docker image '${BASE_IMAGE}' not found. Build it before creating an instance.`,
+    );
+    missingImageError.code = "WA_IMAGE_MISSING";
+    return cb(missingImageError);
+  });
+}
+
 function getTokenFromReq(req) {
   const auth = req.headers["authorization"];
   if (auth && typeof auth === "string") {
@@ -121,9 +133,17 @@ app.post("/containers", (req, res) => {
       return res.status(500).json({ error: netErr.message });
     }
 
-    sh(`docker rm -f ${name} >/dev/null 2>&1 || true`, () => {
+    ensureImage((imageErr) => {
+      if (imageErr) {
+        return res.status(500).json({
+          error: imageErr.message,
+          image: BASE_IMAGE,
+          buildCommand: `docker build -t ${BASE_IMAGE} ./whatsapp-app`,
+        });
+      }
 
-      const cmd = `
+      sh(`docker rm -f ${name} >/dev/null 2>&1 || true`, () => {
+        const cmd = `
 docker run -d \
   --restart unless-stopped \
   --name ${name} \
@@ -137,18 +157,19 @@ docker run -d \
   ${BASE_IMAGE}
 `.trim();
 
-      sh(cmd, (err, stdout, stderr) => {
-        if (err) {
-          console.error("❌ Docker run failed:", err.message);
-          console.error("STDERR:", stderr);
-          return res.status(500).json({ error: err.message, stderr });
-        }
+        sh(cmd, (err, stdout, stderr) => {
+          if (err) {
+            console.error("❌ Docker run failed:", err.message);
+            console.error("STDERR:", stderr);
+            return res.status(500).json({ error: err.message, stderr });
+          }
 
-        return res.json({
-          ok: true,
-          container: name,
-          instanceId,
-          note: "Container created with 1GB shared memory.",
+          return res.json({
+            ok: true,
+            container: name,
+            instanceId,
+            note: "Container created with 1GB shared memory.",
+          });
         });
       });
     });
@@ -227,7 +248,7 @@ app.post("/instances/:instanceId/send-order", async (req, res) => {
     const r = await axios.post(
       internalUrl(instanceId, "/send-order"),
       req.body,
-      { timeout: INTERNAL_TIMEOUT_MS }
+      { timeout: INTERNAL_TIMEOUT_MS },
     );
     return res.status(r.status).json(r.data);
   } catch (e) {
@@ -244,5 +265,7 @@ app.post("/instances/:instanceId/send-order", async (req, res) => {
 // START SERVER
 // ==========================
 app.listen(ORCH_PORT, () => {
-  console.log(`🚀 Orchestrator running on port ${ORCH_PORT} (network: ${DOCKER_NETWORK})`);
+  console.log(
+    `🚀 Orchestrator running on port ${ORCH_PORT} (network: ${DOCKER_NETWORK})`,
+  );
 });

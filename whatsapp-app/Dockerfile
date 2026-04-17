@@ -1,7 +1,9 @@
 FROM node:18-bullseye
 
 # Install required dependencies for Chromium
-RUN apt-get update && apt-get install -y \
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
     libatk-bridge2.0-0 \
@@ -15,9 +17,11 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     libnss3 \
     libxdamage1 \
-    libasound2 \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
+    wget; \
+    if ! apt-get install -y --no-install-recommends libasound2; then \
+    apt-get install -y --no-install-recommends libasound2t64; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
