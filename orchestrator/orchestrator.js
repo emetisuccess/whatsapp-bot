@@ -1,6 +1,6 @@
 const express = require("express");
 const axios = require("axios");
-const registry = require("registry.js");
+const registry = require("./registry.js");
 const { exec } = require("child_process");
 
 const app = express();
