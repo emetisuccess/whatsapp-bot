@@ -8,6 +8,7 @@ RUN curl -fsSL https://get.docker.com | sh
 
 WORKDIR /app
 COPY orchestrator.js .
+COPY registry.js .
 
 # Install deps (express + axios)
 RUN npm init -y \
