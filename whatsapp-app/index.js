@@ -388,7 +388,7 @@ client.on("message", async (msg) => {
 
       try {
         const res = await safeApiCall(() =>
-          apiClient.post("http://45.76.14.96:7070/api/map-staff", {
+          apiClient.post("https://www.elitely.io/api/map-staff", {
             lid,
             phone: staffPhone,
             name: staffName,
@@ -413,7 +413,7 @@ client.on("message", async (msg) => {
     if (text.startsWith("UNIQUE_CODE_")) {
       try {
         const res = await safeApiCall(() =>
-          apiClient.post("http://45.76.14.96:7070/api/map-staff-finalize", {
+          apiClient.post("https://www.elitely.io/api/map-staff-finalize", {
             code: text,
             group_lid: msg.from,
             lid: msg.author,
@@ -462,7 +462,7 @@ client.on("message", async (msg) => {
 
       try {
         const res = await safeApiCall(() =>
-          apiClient.post("http://45.76.14.96:7070/api/map-group-agent", {
+          apiClient.post("https://www.elitely.io/api/map-group-agent", {
             sender,
             group_id: groupId,
             group_name: groupName,
@@ -517,7 +517,7 @@ client.on("message_reaction", async (reaction) => {
     if (!msg?.body) return;
 
     await safeApiCall(() =>
-      apiClient.post("http://45.76.14.96:7070/api/checkReaction", {
+      apiClient.post("https://www.elitely.io/api/checkReaction", {
         message: msg._data,
         reaction,
       }),

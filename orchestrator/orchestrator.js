@@ -261,6 +261,17 @@ app.post("/instances/:instanceId/send-order", async (req, res) => {
   }
 });
 
+// Get overall orchestrator status (not instance-specific)
+app.get("/status", (req, res) => {
+  res.json({
+    ok: true,
+    orchestrator: "running",
+    timestamp: new Date().toISOString(),
+    network: process.env.WA_NETWORK,
+    image: process.env.WA_IMAGE,
+  });
+});
+
 // ==========================
 // START SERVER
 // ==========================
