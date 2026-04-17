@@ -1,0 +1,70 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: whatsapp-node-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: whatsapp-app/package-lock.json
+
+      - name: Install WhatsApp app dependencies
+        working-directory: whatsapp-app
+        run: npm ci
+
+      - name: Validate WhatsApp app syntax
+        working-directory: whatsapp-app
+        run: node --check index.js
+
+      - name: Validate orchestrator syntax
+        run: node --check orchestrator/orchestrator.js
+
+      - name: Build WhatsApp app image
+        run: docker build -t whatsapp-service:ci ./whatsapp-app
+
+      - name: Build orchestrator image
+        run: docker build -t wa-orchestrator:ci ./orchestrator
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy on server over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_PATH }}"
+            git fetch origin main
+            git reset --hard origin/main
+            docker network inspect wa-net >/dev/null 2>&1 || docker network create wa-net
+            docker build -t whatsapp-service:latest ./whatsapp-app
+            docker build -t wa-orchestrator:latest ./orchestrator
+            docker compose up -d --build orchestrator
