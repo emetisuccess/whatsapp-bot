@@ -54,6 +54,7 @@ console.log(`🚀 Starting WhatsApp instance: ${INSTANCE_ID}`);
 // ================== STATE ==================
 let isClientReady = false;
 let latestQR = null;
+let initErrorMessage = null;
 let lastEvent = {
   name: "startup",
   at: new Date().toISOString(),
@@ -133,6 +134,22 @@ function clearStaleChromiumLocks(sessionDir) {
       );
     }
   }
+}
+
+function resolveBrowserExecutablePath() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return null;
 }
 
 function truncateForLog(text, maxLength = 120) {
@@ -246,11 +263,21 @@ async function safeApiCall(fn) {
 }
 
 // ================== WHATSAPP CLIENT ==================
+const browserExecutablePath = resolveBrowserExecutablePath();
+
+if (browserExecutablePath) {
+  logger.info(`🌐 Using browser executable: ${browserExecutablePath}`);
+} else {
+  logger.warn(
+    "⚠️ No browser executable detected. Set PUPPETEER_EXECUTABLE_PATH or install Chrome/Chromium.",
+  );
+}
+
 const client = new Client({
   authTimeoutMs: AUTH_TIMEOUT_MS,
   puppeteer: {
     headless: true,
-    executablePath: "/usr/bin/chromium",
+    ...(browserExecutablePath ? { executablePath: browserExecutablePath } : {}),
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -273,6 +300,7 @@ const client = new Client({
 // ================== QR HANDLER ==================
 client.on("qr", (qr) => {
   latestQR = qr;
+  initErrorMessage = null;
   recordLastEvent("qr", INSTANCE_ID);
   logger.info(`📲 QR Code generated for ${INSTANCE_ID}`);
   qrcode.generate(qr, { small: true });
@@ -286,6 +314,7 @@ client.on("qr", (qr) => {
 
 // ================== AUTHENTICATION EVENTS ==================
 client.on("authenticated", () => {
+  initErrorMessage = null;
   recordLastEvent("authenticated", INSTANCE_ID);
   logger.info("✅ Authenticated successfully");
 });
@@ -296,6 +325,7 @@ client.on("change_state", (state) => {
 });
 
 client.on("auth_failure", (msg) => {
+  initErrorMessage = `Authentication failure: ${msg}`;
   recordLastEvent("auth_failure", msg);
   logger.error("❌ Authentication failure:", msg);
   errorLogBuffer.add(`Auth failure: ${msg}`);
@@ -311,6 +341,7 @@ client.on("loading_screen", (percent, message) => {
 client.on("ready", () => {
   isClientReady = true;
   latestQR = null;
+  initErrorMessage = null;
   systemState = SYSTEM_STATE.SYNCING;
   recordLastEvent("ready", INSTANCE_ID);
 
@@ -584,8 +615,16 @@ app.post("/send-order", async (req, res) => {
 
 // ================== QR ENDPOINT ==================
 app.get("/qr", (req, res) => {
-  if (!latestQR) return res.json({ status: "waiting" });
-  res.json({ status: "qr", qr: latestQR, instance: INSTANCE_ID });
+  if (!latestQR) {
+    return res.json({ status: "waiting", message: initErrorMessage });
+  }
+
+  res.json({
+    status: "qr",
+    qr: latestQR,
+    instance: INSTANCE_ID,
+    message: null,
+  });
 });
 
 // ================== STATUS ==================
@@ -595,6 +634,8 @@ app.get("/status", (req, res) => {
     state: systemState,
     instance: INSTANCE_ID,
     build: BUILD_MARKER,
+    browserPath: browserExecutablePath,
+    initError: initErrorMessage,
     hasQr: Boolean(latestQR),
     clientInfo: client.info?.wid?._serialized || null,
     lastEvent,
@@ -621,13 +662,15 @@ if (fs.existsSync(SESSION_DIR)) {
 
 // ================== INIT ==================
 client.initialize().catch((error) => {
-  if (String(error).includes("auth timeout")) {
-    logAndBufferError(
-      "WhatsApp initialization failed",
-      `auth timeout after ${AUTH_TIMEOUT_MS}ms. Scan the latest QR promptly or recreate the session.`,
-    );
+  const rawError = String(error?.message || error);
+
+  if (rawError.includes("auth timeout")) {
+    initErrorMessage = `auth timeout after ${AUTH_TIMEOUT_MS}ms. Scan the latest QR promptly or recreate the session.`;
+    logAndBufferError("WhatsApp initialization failed", initErrorMessage);
     return;
   }
+
+  initErrorMessage = rawError;
 
   logAndBufferError("WhatsApp initialization failed", error);
 });
