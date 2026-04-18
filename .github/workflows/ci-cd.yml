@@ -73,3 +73,75 @@ jobs:
             docker build -t whatsapp-service:latest ./whatsapp-app
             docker build -t wa-orchestrator:latest ./orchestrator
             docker compose up -d --build orchestrator
+
+            refresh_whatsapp_instance() {
+              name="$1"
+              backup_name="${name}_backup_$(date +%s)"
+              env_dump=""
+              instance_id=""
+              http_port=""
+              ws_port=""
+              session_path=""
+              session_volume=""
+              status=""
+
+              env_dump="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$name")"
+              instance_id="$(printf '%s\n' "$env_dump" | sed -n 's/^INSTANCE_ID=//p' | head -n 1)"
+              http_port="$(printf '%s\n' "$env_dump" | sed -n 's/^HTTP_PORT=//p' | head -n 1)"
+              ws_port="$(printf '%s\n' "$env_dump" | sed -n 's/^WS_PORT=//p' | head -n 1)"
+              session_path="$(printf '%s\n' "$env_dump" | sed -n 's/^SESSION_PATH=//p' | head -n 1)"
+              session_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/sessions"}}{{println .Name}}{{end}}{{end}}' "$name" | head -n 1)"
+
+              instance_id="${instance_id:-${name#wa_}}"
+              http_port="${http_port:-9000}"
+              ws_port="${ws_port:-9090}"
+              session_path="${session_path:-/sessions}"
+              session_volume="${session_volume:-wa_sessions_${instance_id}}"
+
+              echo "Refreshing WhatsApp instance: $name"
+              docker stop "$name" >/dev/null 2>&1 || true
+              docker rename "$name" "$backup_name"
+
+              if ! docker run -d \
+                --init \
+                --restart unless-stopped \
+                --name "$name" \
+                --network wa-net \
+                --shm-size=1g \
+                -e INSTANCE_ID="$instance_id" \
+                -e HTTP_PORT="$http_port" \
+                -e WS_PORT="$ws_port" \
+                -e SESSION_PATH="$session_path" \
+                -v "$session_volume:/sessions" \
+                whatsapp-service:latest
+              then
+                echo "New container failed to start, rolling back $name"
+                docker rm -f "$name" >/dev/null 2>&1 || true
+                docker rename "$backup_name" "$name"
+                docker start "$name"
+                return 1
+              fi
+
+              sleep 5
+              status="$(docker inspect --format '{{.State.Status}}' "$name")"
+
+              if [ "$status" != "running" ]; then
+                echo "New container is not running for $name, rolling back"
+                docker logs "$name" || true
+                docker rm -f "$name" || true
+                docker rename "$backup_name" "$name"
+                docker start "$name"
+                return 1
+              fi
+
+              docker rm -f "$backup_name"
+            }
+
+            whatsapp_containers="$(docker ps -a --filter "name=^wa_" --format '{{.Names}}')"
+            if [ -z "$whatsapp_containers" ]; then
+              echo "No WhatsApp instance containers found to refresh."
+            else
+              for container_name in $whatsapp_containers; do
+                refresh_whatsapp_instance "$container_name"
+              done
+            fi
