@@ -1,20 +1,6 @@
 version: "3.8"
 
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: wa-redis
-    ports:
-      - "127.0.0.1:6379:6379"
-    restart: unless-stopped
-    networks:
-      - wa-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   orchestrator:
     build:
       context: ./orchestrator
@@ -26,12 +12,7 @@ services:
       ORCH_KEY: "REPLACE_WITH_YOUR_KEY"
       WA_NETWORK: "wa-net"
       WA_IMAGE: "whatsapp-service:latest"
-      REDIS_URL: "redis://wa-redis:6379"
       INTERNAL_TIMEOUT_MS: "15000"
-      STATUS_POLL_INTERVAL_MS: "5000"
-      STATUS_POLL_ATTEMPTS: "24"
-    depends_on:
-      - redis
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

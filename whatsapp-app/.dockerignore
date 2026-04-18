@@ -1,8 +1,0 @@
-node_modules
-sessions
-combined.log
-errors.log
-npm-debug.log*
-Dockerfile*
-.git
-.gitignore
