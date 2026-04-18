@@ -6,8 +6,8 @@ ENV NODE_ENV=production \
 
 USER root
 
-RUN mkdir -p /sessions \
-    && chown -R pptruser:pptruser /sessions
+RUN mkdir -p /sessions /home/pptruser/app \
+    && chown -R pptruser:pptruser /sessions /home/pptruser/app
 
 USER pptruser
 
