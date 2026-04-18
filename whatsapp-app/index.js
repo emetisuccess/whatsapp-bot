@@ -351,15 +351,7 @@ const client = new Client({
     headless: true,
     ...(browserExecutablePath ? { executablePath: browserExecutablePath } : {}),
     timeout: AUTH_TIMEOUT_MS,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-features=site-per-process",
-      "--no-zygote",
-      "--single-process",
-    ],
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   },
   authStrategy: new LocalAuth({
     clientId: INSTANCE_ID,

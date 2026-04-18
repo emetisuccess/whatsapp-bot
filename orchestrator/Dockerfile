@@ -1,20 +1,18 @@
-FROM node:20-bookworm-slim
+FROM node:18-slim
 
-ENV NODE_ENV=production
+# Install curl + CA certs
+RUN apt-get update && apt-get install -y curl ca-certificates gnupg
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://get.docker.com | sh
+# Install Docker CLI (orchestrator needs docker command, uses host docker.sock)
+RUN curl -fsSL https://get.docker.com | sh
 
 WORKDIR /app
+COPY orchestrator.js .
 
-COPY package*.json ./
-RUN npm ci --omit=dev \
+# Install deps (express + axios)
+RUN npm init -y \
+    && npm install express axios \
     && npm cache clean --force
 
-COPY . .
-
 EXPOSE 7070
-
 CMD ["node", "orchestrator.js"]

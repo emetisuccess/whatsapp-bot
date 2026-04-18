@@ -1,22 +1,34 @@
-FROM ghcr.io/puppeteer/puppeteer:24.40.0
+FROM node:18-bullseye
 
-ENV NODE_ENV=production \
-    PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
-    PUPPETEER_SKIP_DOWNLOAD=true
+# Install required dependencies for Chromium
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    fonts-liberation \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxrandr2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnss3 \
+    libxdamage1 \
+    libasound2 \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
-USER root
+WORKDIR /app
 
-RUN mkdir -p /sessions /home/pptruser/app \
-    && chown -R pptruser:pptruser /sessions /home/pptruser/app
+COPY package*.json ./
 
-USER pptruser
+# IMPORTANT: allow puppeteer to download its own chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
 
-WORKDIR /home/pptruser/app
+RUN npm install --production
 
-COPY --chown=pptruser:pptruser package*.json ./
-RUN npm ci --omit=dev
-
-COPY --chown=pptruser:pptruser . .
+COPY . .
 
 EXPOSE 9000 9090
 
