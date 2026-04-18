@@ -1,5 +1,14 @@
 {
+  "name": "wa-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "main": "orchestrator.js",
+  "scripts": {
+    "start": "node orchestrator.js"
+  },
   "dependencies": {
+    "axios": "^1.6.8",
+    "express": "^4.19.2",
     "ioredis": "^5.10.1"
   }
 }
