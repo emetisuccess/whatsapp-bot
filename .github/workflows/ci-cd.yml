@@ -60,32 +60,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           script: |
-            set -eu
-
+            set -e
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-
-            compose_cmd() {
-              if docker compose version >/dev/null 2>&1; then
-                docker compose "$@"
-                return
-              fi
-              if command -v docker-compose >/dev/null 2>&1; then
-                docker-compose "$@"
-                return
-              fi
-              echo "Docker Compose is not available on server (need docker compose or docker-compose)."
-              return 1
-            }
-
-            if ! command -v git >/dev/null 2>&1; then
-              echo "git is not installed on server"
-              exit 1
-            fi
-
-            if ! command -v docker >/dev/null 2>&1; then
-              echo "docker is not installed on server"
-              exit 1
-            fi
 
             if [ ! -d "$DEPLOY_PATH" ]; then
               echo "DEPLOY_PATH does not exist on server: $DEPLOY_PATH"
@@ -94,119 +70,23 @@ jobs:
 
             cd "$DEPLOY_PATH"
 
-            if [ ! -d .git ]; then
-              echo "DEPLOY_PATH is not a git repository: $DEPLOY_PATH"
-              exit 1
-            fi
-
-            if [ ! -f docker-compose.yml ]; then
-              echo "docker-compose.yml not found in DEPLOY_PATH: $DEPLOY_PATH"
-              exit 1
-            fi
-
+            echo "📥 Pull latest code"
             git fetch origin main
             git reset --hard origin/main
+
+            echo "🌐 Ensure network exists"
             docker network inspect wa-net >/dev/null 2>&1 || docker network create wa-net
-            docker build -t whatsapp-service:latest ./whatsapp-app
-            docker build -t wa-orchestrator:latest ./orchestrator
-            compose_cmd up -d --build --remove-orphans orchestrator
 
-            refresh_failures=""
+            echo "🧹 Stop old containers"
+            docker compose down
 
-            refresh_whatsapp_instance() {
-              name="$1"
-              backup_name="${name}_backup_$(date +%s)"
-              env_dump=""
-              instance_id=""
-              http_port=""
-              ws_port=""
-              session_path=""
-              session_volume=""
-              status=""
+            echo "🗑️ Remove old images"
+            docker rmi whatsapp-service:latest || true
+            docker rmi wa-orchestrator:latest || true
 
-              if ! docker inspect "$name" >/dev/null 2>&1; then
-                echo "Skipping missing container: $name"
-                return 0
-              fi
+            echo "🔨 Build fresh images"
+            docker build --no-cache -t whatsapp-service:latest ./whatsapp-app
+            docker build --no-cache -t wa-orchestrator:latest ./orchestrator
 
-              env_dump="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$name")"
-              instance_id="$(printf '%s\n' "$env_dump" | awk 'index($0, "INSTANCE_ID=") == 1 { print substr($0, 13); exit }')"
-              http_port="$(printf '%s\n' "$env_dump" | awk 'index($0, "HTTP_PORT=") == 1 { print substr($0, 11); exit }')"
-              ws_port="$(printf '%s\n' "$env_dump" | awk 'index($0, "WS_PORT=") == 1 { print substr($0, 9); exit }')"
-              session_path="$(printf '%s\n' "$env_dump" | awk 'index($0, "SESSION_PATH=") == 1 { print substr($0, 14); exit }')"
-              session_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/sessions"}}{{.Name}}{{end}}{{end}}' "$name" 2>/dev/null || true)"
-
-              instance_id="${instance_id:-${name#wa_}}"
-              http_port="${http_port:-9000}"
-              ws_port="${ws_port:-9090}"
-              session_path="${session_path:-/sessions}"
-              session_volume="${session_volume:-wa_sessions_${instance_id}}"
-
-              echo "Refreshing WhatsApp instance: $name"
-              docker stop "$name" >/dev/null 2>&1 || true
-              if ! docker rename "$name" "$backup_name"; then
-                echo "Failed to rename $name to $backup_name"
-                refresh_failures="$refresh_failures $name(rename)"
-                return 0
-              fi
-
-              if ! docker run -d \
-                --init \
-                --restart unless-stopped \
-                --name "$name" \
-                --network wa-net \
-                --shm-size=1g \
-                -e INSTANCE_ID="$instance_id" \
-                -e HTTP_PORT="$http_port" \
-                -e WS_PORT="$ws_port" \
-                -e SESSION_PATH="$session_path" \
-                -v "$session_volume:/sessions" \
-                whatsapp-service:latest
-              then
-                echo "New container failed to start, rolling back $name"
-                docker rm -f "$name" >/dev/null 2>&1 || true
-                docker rename "$backup_name" "$name"
-                docker start "$name"
-                refresh_failures="$refresh_failures $name(start)"
-                return 0
-              fi
-
-              attempts=0
-              status=""
-              while [ "$attempts" -lt 6 ]; do
-                status="$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null || true)"
-                if [ "$status" = "running" ]; then
-                  break
-                fi
-                attempts=$((attempts + 1))
-                sleep 5
-              done
-
-              if [ "$status" != "running" ]; then
-                echo "New container is not running for $name, rolling back"
-                docker logs "$name" || true
-                docker rm -f "$name" || true
-                docker rename "$backup_name" "$name"
-                docker start "$name"
-                refresh_failures="$refresh_failures $name(status=${status:-unknown})"
-                return 0
-              fi
-
-              docker rm -f "$backup_name" >/dev/null 2>&1 || true
-              echo "Refresh completed for $name"
-            }
-
-            set +e
-            whatsapp_containers="$(docker ps -a --filter "name=^/wa_" --format '{{.Names}}' | grep -v '_backup_' || true)"
-            if [ -z "$whatsapp_containers" ]; then
-              echo "No WhatsApp instance containers found to refresh."
-            else
-              for container_name in $whatsapp_containers; do
-                refresh_whatsapp_instance "$container_name"
-              done
-            fi
-            set -e
-
-            if [ -n "$refresh_failures" ]; then
-              echo "Deployment finished with instance refresh warnings:$refresh_failures"
-            fi
+            echo "🚀 Start containers"
+            docker compose up -d --force-recreate
