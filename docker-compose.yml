@@ -40,4 +40,5 @@ services:
 
 networks:
   wa-net:
+    external: true
     name: wa-net
