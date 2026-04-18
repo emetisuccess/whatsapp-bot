@@ -220,6 +220,30 @@ app.get("/instances/:instanceId/status", async (req, res) => {
 });
 
 // ==========================
+// PROXY: QR (ADD THIS)
+// ==========================
+app.get("/instances/:instanceId/qr", async (req, res) => {
+  const { instanceId } = req.params;
+
+  try {
+    const r = await axios.get(internalUrl(instanceId, "/qr"), {
+      timeout: INTERNAL_TIMEOUT_MS,
+    });
+
+    return res.status(r.status).json(r.data);
+  } catch (e) {
+    const status = e.response?.status || 502;
+
+    return res.status(status).json({
+      status: "waiting",
+      error: "Failed to fetch QR",
+      detail: e.message,
+      upstream: e.response?.data || null,
+    });
+  }
+});
+
+// ==========================
 // HEALTH
 // ==========================
 app.get("/status", (req, res) => {
