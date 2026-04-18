@@ -110,7 +110,9 @@ jobs:
             docker network inspect wa-net >/dev/null 2>&1 || docker network create wa-net
             docker build -t whatsapp-service:latest ./whatsapp-app
             docker build -t wa-orchestrator:latest ./orchestrator
-            compose_cmd up -d --build orchestrator
+            compose_cmd up -d --build --remove-orphans orchestrator
+
+            refresh_failures=""
 
             refresh_whatsapp_instance() {
               name="$1"
@@ -122,6 +124,11 @@ jobs:
               session_path=""
               session_volume=""
               status=""
+
+              if ! docker inspect "$name" >/dev/null 2>&1; then
+                echo "Skipping missing container: $name"
+                return 0
+              fi
 
               env_dump="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$name")"
               instance_id="$(printf '%s\n' "$env_dump" | sed -n 's/^INSTANCE_ID=//p' | head -n 1)"
@@ -138,7 +145,11 @@ jobs:
 
               echo "Refreshing WhatsApp instance: $name"
               docker stop "$name" >/dev/null 2>&1 || true
-              docker rename "$name" "$backup_name"
+              if ! docker rename "$name" "$backup_name"; then
+                echo "Failed to rename $name to $backup_name"
+                refresh_failures="$refresh_failures $name(rename)"
+                return 0
+              fi
 
               if ! docker run -d \
                 --init \
@@ -157,11 +168,20 @@ jobs:
                 docker rm -f "$name" >/dev/null 2>&1 || true
                 docker rename "$backup_name" "$name"
                 docker start "$name"
-                return 1
+                refresh_failures="$refresh_failures $name(start)"
+                return 0
               fi
 
-              sleep 5
-              status="$(docker inspect --format '{{.State.Status}}' "$name")"
+              attempts=0
+              status=""
+              while [ "$attempts" -lt 6 ]; do
+                status="$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null || true)"
+                if [ "$status" = "running" ]; then
+                  break
+                fi
+                attempts=$((attempts + 1))
+                sleep 5
+              done
 
               if [ "$status" != "running" ]; then
                 echo "New container is not running for $name, rolling back"
@@ -169,10 +189,12 @@ jobs:
                 docker rm -f "$name" || true
                 docker rename "$backup_name" "$name"
                 docker start "$name"
-                return 1
+                refresh_failures="$refresh_failures $name(status=${status:-unknown})"
+                return 0
               fi
 
-              docker rm -f "$backup_name"
+              docker rm -f "$backup_name" >/dev/null 2>&1 || true
+              echo "Refresh completed for $name"
             }
 
             whatsapp_containers="$(docker ps -a --filter "name=^/wa_" --format '{{.Names}}' | sed '/_backup_/d')"
@@ -182,4 +204,8 @@ jobs:
               for container_name in $whatsapp_containers; do
                 refresh_whatsapp_instance "$container_name"
               done
+            fi
+
+            if [ -n "$refresh_failures" ]; then
+              echo "Deployment finished with instance refresh warnings:$refresh_failures"
             fi
