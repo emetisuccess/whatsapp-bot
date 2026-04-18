@@ -1,38 +1,38 @@
 // ================== ENV CONFIG ==================
-const INSTANCE_ID = process.env.INSTANCE_ID || 'default_instance';
-const SESSION_PATH = process.env.SESSION_PATH || './sessions';
+const INSTANCE_ID = process.env.INSTANCE_ID || "default_instance";
+const SESSION_PATH = process.env.SESSION_PATH || "./sessions";
 const HTTP_PORT = process.env.HTTP_PORT || 9000;
 const WS_PORT = process.env.WS_PORT || 9090;
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID || '';
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID || "";
 const ERROR_BATCH_INTERVAL = 10 * 60 * 1000;
 
 // ================== IMPORTS ==================
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const qrcode = require('qrcode-terminal');
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const fetch = require('node-fetch');
-const winston = require('winston');
-const axios = require('axios');
-const PQueue = require('p-queue').default;
-const fs = require('fs');                 // <-- IMPORTANT: moved to top
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const qrcode = require("qrcode-terminal");
+const { Client, LocalAuth } = require("whatsapp-web.js");
+const fetch = require("node-fetch");
+const winston = require("winston");
+const axios = require("axios");
+const PQueue = require("p-queue").default;
+const fs = require("fs"); // <-- IMPORTANT: moved to top
 
 // ================== CRASH SAFETY ==================
-process.on('unhandledRejection', err => {
-  console.error('❌ Unhandled rejection:', err);
+process.on("unhandledRejection", (err) => {
+  console.error("❌ Unhandled rejection:", err);
 });
-process.on('uncaughtException', err => {
-  console.error('❌ Uncaught exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught exception:", err);
 });
 
 // ================== SYSTEM STATE ==================
 const SYSTEM_STATE = {
-  STARTING: 'starting',
-  SYNCING: 'syncing',
-  READY: 'ready'
+  STARTING: "starting",
+  SYNCING: "syncing",
+  READY: "ready",
 };
 
 let systemState = SYSTEM_STATE.STARTING;
@@ -52,16 +52,16 @@ let latestQR = null;
 
 // ================== LOGGING ==================
 const logger = winston.createLogger({
-  level: 'info',
+  level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format.json()
+    winston.format.json(),
   ),
   transports: [
     new winston.transports.Console({ format: winston.format.simple() }),
-    new winston.transports.File({ filename: 'combined.log' }),
-    new winston.transports.File({ filename: 'errors.log', level: 'error' })
-  ]
+    new winston.transports.File({ filename: "combined.log" }),
+    new winston.transports.File({ filename: "errors.log", level: "error" }),
+  ],
 });
 
 // ================== TELEGRAM ALERTS ==================
@@ -70,15 +70,18 @@ const errorLogBuffer = new Set();
 async function sendTelegramAlert(message) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_USER_ID) return;
   try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_USER_ID,
-        text: `🚨 *WhatsApp Server (${INSTANCE_ID})* 🚨\n\n${message}`,
-        parse_mode: 'Markdown'
-      })
-    });
+    await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_USER_ID,
+          text: `🚨 *WhatsApp Server (${INSTANCE_ID})* 🚨\n\n${message}`,
+          parse_mode: "Markdown",
+        }),
+      },
+    );
   } catch (err) {
     logger.warn("⚠️ Telegram alert failed:", err.message);
   }
@@ -92,21 +95,21 @@ function logAndBufferError(label, error) {
 
 setInterval(() => {
   if (!errorLogBuffer.size) return;
-  const batched = Array.from(errorLogBuffer).join('\n\n').slice(0, 4000);
+  const batched = Array.from(errorLogBuffer).join("\n\n").slice(0, 4000);
   sendTelegramAlert(batched);
   errorLogBuffer.clear();
 }, ERROR_BATCH_INTERVAL);
 
 // ================== API CLIENT ==================
 const apiClient = axios.create({
-  timeout: 10000
+  timeout: 10000,
 });
 
 // ================== API QUEUE ==================
 const apiQueue = new PQueue({
   concurrency: 2,
   interval: 1000,
-  intervalCap: 10
+  intervalCap: 10,
 });
 
 // ================== CIRCUIT BREAKER ==================
@@ -152,27 +155,24 @@ const client = new Client({
   puppeteer: {
     timeout: 60000,
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox'
-    ]
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   },
   authStrategy: new LocalAuth({
     clientId: INSTANCE_ID,
-    dataPath: SESSION_PATH
-  })
+    dataPath: SESSION_PATH,
+  }),
 });
 
 // (Optional) You can remove browser_created entirely – the library sets a good user agent
 // client.on('browser_created', async (browser) => { ... });
 
 // ================== QR HANDLER ==================
-client.on('qr', (qr) => {
+client.on("qr", (qr) => {
   latestQR = qr;
-  logger.info('📲 QR Code generated');
+  logger.info("📲 QR Code generated");
   qrcode.generate(qr, { small: true });
 
-  wss.clients.forEach(ws => {
+  wss.clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(qr);
     }
@@ -180,38 +180,41 @@ client.on('qr', (qr) => {
 });
 
 // ================== AUTHENTICATION EVENTS ==================
-client.on('authenticated', () => {
-  logger.info('✅ Authenticated successfully');
+client.on("authenticated", () => {
+  logger.info("✅ Authenticated successfully");
 });
 
-client.on('auth_failure', msg => {
-  logger.error('❌ Authentication failure:', msg);
+client.on("auth_failure", (msg) => {
+  logger.error("❌ Authentication failure:", msg);
   errorLogBuffer.add(`Auth failure: ${msg}`);
 });
 
 // ================== LOADING SCREEN ==================
-client.on('loading_screen', (percent, message) => {
+client.on("loading_screen", (percent, message) => {
   logger.info(`⏳ Loading: ${percent}% - ${message}`);
 });
 
 // ================== READY ==================
-client.on('ready', () => {
+client.on("ready", () => {
   isClientReady = true;
   latestQR = null;
   systemState = SYSTEM_STATE.SYNCING;
 
-  logger.info('🎉 WhatsApp ready – entering SYNCING mode');
+  logger.info("🎉 WhatsApp ready – entering SYNCING mode");
 
   // Warm-up window before allowing commands
-  setTimeout(() => {
-    systemState = SYSTEM_STATE.READY;
-    logger.info('✅ System is now READY');
-  }, 5 * 60 * 1000);
+  setTimeout(
+    () => {
+      systemState = SYSTEM_STATE.READY;
+      logger.info("✅ System is now READY");
+    },
+    5 * 60 * 1000,
+  );
 });
 
 // ================== DISCONNECTED ==================
-client.on('disconnected', (reason) => {
-  logger.warn('⚠️ Client disconnected:', reason);
+client.on("disconnected", (reason) => {
+  logger.warn("⚠️ Client disconnected:", reason);
   isClientReady = false;
   systemState = SYSTEM_STATE.STARTING;
   // Optionally reinitialize after a delay:
@@ -222,18 +225,24 @@ client.on('disconnected', (reason) => {
 const ALLOWED_COMMANDS = [
   /^REGISTER STAFF/i,
   /^UNIQUE_CODE_/i,
-  /^ADD GROUP TO CRM/i
+  /^ADD GROUP TO CRM/i,
+  /^PING/i,
 ];
 
 function isAllowedCommand(text) {
-  return ALLOWED_COMMANDS.some(rgx => rgx.test(text));
+  return ALLOWED_COMMANDS.some((rgx) => rgx.test(text));
 }
 
 // ================== MESSAGE HANDLER ==================
-client.on('message', async (msg) => {
+client.on("message", async (msg) => {
   try {
     const text = msg.body?.trim();
     if (!text) return;
+
+    if (text.toUpperCase() === "PING") {
+      await msg.reply("PONG");
+      return;
+    }
 
     // 🚧 SYNC GATE
     if (systemState !== SYSTEM_STATE.READY) {
@@ -249,7 +258,7 @@ client.on('message', async (msg) => {
     if (text.toUpperCase().startsWith("REGISTER STAFF")) {
       const parts = text.split("-");
       if (parts.length !== 3) {
-        await msg.reply('⚠️ Use: REGISTER STAFF-phone-name');
+        await msg.reply("⚠️ Use: REGISTER STAFF-phone-name");
         return;
       }
 
@@ -260,20 +269,22 @@ client.on('message', async (msg) => {
 
       try {
         const res = await safeApiCall(() =>
-          apiClient.post('https://elitegentessentials.com/api/map-staff', {
-            lid, phone: staffPhone, name: staffName
-          })
+          apiClient.post("https://elitegentessentials.com/api/map-staff", {
+            lid,
+            phone: staffPhone,
+            name: staffName,
+          }),
         );
 
         if (res?.data?.success) {
           await msg.reply(
-            `✅ Hi ${staffName}, post this code in the group:\n\n🔑 *${res.data.code}*`
+            `✅ Hi ${staffName}, post this code in the group:\n\n🔑 *${res.data.code}*`,
           );
         } else {
-          await msg.reply(res?.data?.error || 'Registration failed');
+          await msg.reply(res?.data?.error || "Registration failed");
         }
       } catch {
-        await msg.reply('❌ Error processing registration.');
+        await msg.reply("❌ Error processing registration.");
       }
       return;
     }
@@ -283,70 +294,74 @@ client.on('message', async (msg) => {
       try {
         const res = await safeApiCall(() =>
           apiClient.post(
-            'https://elitegentessentials.com/api/map-staff-finalize',
-            { code: text, group_lid: msg.from, lid: msg.author }
-          )
+            "https://elitegentessentials.com/api/map-staff-finalize",
+            { code: text, group_lid: msg.from, lid: msg.author },
+          ),
         );
 
         const reply = res?.data?.success
-          ? '✅ You’ve been successfully registered!'
-          : '❌ Registration failed.';
+          ? "✅ You’ve been successfully registered!"
+          : "❌ Registration failed.";
 
         await client.sendMessage(res?.data?.sender_id || msg.from, reply);
       } catch {
         await client.sendMessage(
           msg.author || msg.from,
-          '❌ Error finalizing registration.'
+          "❌ Error finalizing registration.",
         );
       }
       return;
     }
 
     // ================= ADD GROUP =================
-    if (text.toUpperCase().startsWith('ADD GROUP TO CRM -')) {
-      if (!msg.from.includes('@g.us')) {
-        await msg.reply('❌ Must be used in a group.');
+    if (text.toUpperCase().startsWith("ADD GROUP TO CRM -")) {
+      if (!msg.from.includes("@g.us")) {
+        await msg.reply("❌ Must be used in a group.");
         return;
       }
 
-      const parts = text.split(' - ');
+      const parts = text.split(" - ");
       if (parts.length < 3) {
-        await msg.reply('⚠️ ADD GROUP TO CRM - Group Name - AgentPhone');
+        await msg.reply("⚠️ ADD GROUP TO CRM - Group Name - AgentPhone");
         return;
       }
 
       const groupName = parts[1].trim();
-      const agentPhone = parts[2].replace(/\D/g, '');
+      const agentPhone = parts[2].replace(/\D/g, "");
       const groupId = msg.from;
       const sender = msg.author;
 
       if (!/^234\d{10}$/.test(agentPhone)) {
-        await msg.reply('❌ Invalid phone: 234XXXXXXXXXX');
+        await msg.reply("❌ Invalid phone: 234XXXXXXXXXX");
         return;
       }
 
       try {
         const res = await safeApiCall(() =>
           apiClient.post(
-            'https://elitegentessentials.com/api/map-group-agent',
-            { sender, group_id: groupId, group_name: groupName, agent_phone: agentPhone }
-          )
+            "https://elitegentessentials.com/api/map-group-agent",
+            {
+              sender,
+              group_id: groupId,
+              group_name: groupName,
+              agent_phone: agentPhone,
+            },
+          ),
         );
 
-        await msg.reply(res?.data?.message || '✅ Agent mapped.');
+        await msg.reply(res?.data?.message || "✅ Agent mapped.");
       } catch {
-        await msg.reply('❌ Failed to map group.');
+        await msg.reply("❌ Failed to map group.");
       }
       return;
     }
-
   } catch (error) {
     logAndBufferError("Error in message handler", error);
   }
 });
 
 // ================== MESSAGE REACTION ==================
-client.on('message_reaction', async (reaction) => {
+client.on("message_reaction", async (reaction) => {
   // ignore until fully ready
   if (systemState !== SYSTEM_STATE.READY) return;
 
@@ -355,10 +370,10 @@ client.on('message_reaction', async (reaction) => {
     if (!msg?.body) return;
 
     await safeApiCall(() =>
-      apiClient.post(
-        "https://elitegentessentials.com/api/checkReaction",
-        { message: msg._data, reaction }
-      )
+      apiClient.post("https://elitegentessentials.com/api/checkReaction", {
+        message: msg._data,
+        reaction,
+      }),
     );
   } catch (err) {
     logAndBufferError("Error in message_reaction", err);
@@ -376,7 +391,8 @@ app.post("/send-order", async (req, res) => {
 
     channel = typeof channel === "string" ? channel.trim() : "";
     order = typeof order === "string" ? order.trim() : "";
-    channel_type = typeof channel_type === "string" ? channel_type.trim().toLowerCase() : "";
+    channel_type =
+      typeof channel_type === "string" ? channel_type.trim().toLowerCase() : "";
 
     if (!channel || !order) {
       return res.status(400).json({ error: "channel and order are required" });
@@ -391,7 +407,7 @@ app.post("/send-order", async (req, res) => {
         if (channel_type === "group") {
           return res.status(400).json({
             error: "Invalid channel: group messages require a @g.us chat id",
-            hint: "Pass channel as the full group id like 1203...@g.us (not a phone number)."
+            hint: "Pass channel as the full group id like 1203...@g.us (not a phone number).",
           });
         }
         // default DM
@@ -399,14 +415,15 @@ app.post("/send-order", async (req, res) => {
       } else {
         return res.status(400).json({
           error: "Invalid channel format",
-          hint: "Use a full WhatsApp chat id like 234...@c.us or 1203...@g.us"
+          hint: "Use a full WhatsApp chat id like 234...@c.us or 1203...@g.us",
         });
       }
     }
 
-    const result = await client.sendMessage(channel, order, { sendSeen: false });
+    const result = await client.sendMessage(channel, order, {
+      sendSeen: false,
+    });
     return res.json({ ok: true, to: channel, result });
-
   } catch (error) {
     logAndBufferError("Error sending order", error);
     return res.status(500).json({ error: "Failed to send order" });
@@ -414,13 +431,13 @@ app.post("/send-order", async (req, res) => {
 });
 
 // ================== QR ENDPOINT ==================
-app.get('/qr', (req, res) => {
-  if (!latestQR) return res.json({ status: 'waiting' });
-  res.json({ status: 'qr', qr: latestQR, instance: INSTANCE_ID });
+app.get("/qr", (req, res) => {
+  if (!latestQR) return res.json({ status: "waiting" });
+  res.json({ status: "qr", qr: latestQR, instance: INSTANCE_ID });
 });
 
 // ================== STATUS ==================
-app.get('/status', (req, res) => {
+app.get("/status", (req, res) => {
   res.json({ ready: isClientReady, state: systemState, instance: INSTANCE_ID });
 });
 
@@ -430,13 +447,9 @@ app.get("/", (req, res) => {
 });
 
 // ================== START SERVERS ==================
-server.listen(WS_PORT, () =>
-  logger.info(`WebSocket running on ${WS_PORT}`)
-);
+server.listen(WS_PORT, () => logger.info(`WebSocket running on ${WS_PORT}`));
 
-app.listen(HTTP_PORT, () =>
-  logger.info(`HTTP running on ${HTTP_PORT}`)
-);
+app.listen(HTTP_PORT, () => logger.info(`HTTP running on ${HTTP_PORT}`));
 
 // ================== CHECK SESSION DIRECTORY ==================
 const sessionDir = `${SESSION_PATH}/${INSTANCE_ID}`;
