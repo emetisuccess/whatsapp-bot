@@ -186,6 +186,28 @@ app.delete("/containers/:name", async (req, res) => {
 });
 
 // ==========================
+// PROXY: QR
+// ==========================
+app.get("/instances/:instanceId/qr", async (req, res) => {
+  const { instanceId } = req.params;
+
+  try {
+    const r = await axios.get(internalUrl(instanceId, "/qr"), {
+      timeout: INTERNAL_TIMEOUT_MS,
+    });
+    return res.status(r.status).json(r.data);
+  } catch (e) {
+    const status = e.response?.status || 502;
+    return res.status(status).json({
+      status: "waiting",
+      error: "Failed to reach WhatsApp instance",
+      detail: e.message,
+      upstream: e.response?.data || null,
+    });
+  }
+});
+
+// ==========================
 // LIST INSTANCES
 // ==========================
 app.get("/instances", async (req, res) => {
@@ -220,23 +242,22 @@ app.get("/instances/:instanceId/status", async (req, res) => {
 });
 
 // ==========================
-// PROXY: QR (ADD THIS)
+// PROXY: SEND-ORDER
 // ==========================
-app.get("/instances/:instanceId/qr", async (req, res) => {
+app.post("/instances/:instanceId/send-order", async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const r = await axios.get(internalUrl(instanceId, "/qr"), {
-      timeout: INTERNAL_TIMEOUT_MS,
-    });
-
+    const r = await axios.post(
+      internalUrl(instanceId, "/send-order"),
+      req.body,
+      { timeout: INTERNAL_TIMEOUT_MS },
+    );
     return res.status(r.status).json(r.data);
   } catch (e) {
     const status = e.response?.status || 502;
-
     return res.status(status).json({
-      status: "waiting",
-      error: "Failed to fetch QR",
+      error: "Failed to reach WhatsApp instance",
       detail: e.message,
       upstream: e.response?.data || null,
     });
