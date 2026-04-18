@@ -249,12 +249,16 @@ async function safeApiCall(fn) {
 const client = new Client({
   authTimeoutMs: AUTH_TIMEOUT_MS,
   puppeteer: {
-    timeout: AUTH_TIMEOUT_MS,
     headless: true,
+    executablePath: "/usr/bin/chromium",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--single-process",
+      "--no-zygote",
     ],
   },
   authStrategy: new LocalAuth({

@@ -1,39 +1,21 @@
-FROM node:18-bullseye
+FROM node:18-slim
 
-# Install required dependencies for Chromium
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-    ca-certificates \
-    fonts-liberation \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxrandr2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnss3 \
-    libxdamage1 \
-    wget; \
-    if ! apt-get install -y --no-install-recommends libasound2; then \
-    apt-get install -y --no-install-recommends libasound2t64; \
-    fi; \
-    rm -rf /var/lib/apt/lists/*
+# 🔥 Install Google Chrome (THIS is where your snippet goes)
+RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
+    && wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tell puppeteer where Chrome is
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 
 WORKDIR /app
 
 COPY package*.json ./
-
-# IMPORTANT: allow puppeteer to download its own chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
-
-RUN npm install --production
+RUN npm install
 
 COPY . .
-
-EXPOSE 9000 9090
 
 CMD ["node", "index.js"]

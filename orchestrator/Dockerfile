@@ -10,10 +10,10 @@ WORKDIR /app
 COPY orchestrator.js .
 COPY registry.js .
 
-# Install deps (express + axios)
-RUN npm init -y \
-  && npm install express axios \
-  && npm cache clean --force
+# Install deps
+RUN npm init -y
+RUN npm install express axios ioredis
+RUN npm cache clean --force
 
 EXPOSE 7070
 CMD ["node", "orchestrator.js"]

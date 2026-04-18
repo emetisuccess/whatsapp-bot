@@ -1,34 +1,36 @@
-class InstanceRegistry {
-  constructor() {
-    this.instances = new Map();
-  }
+const Redis = require("ioredis");
+const redis = new Redis(process.env.REDIS_URL);
 
-  create(id, containerId) {
-    this.instances.set(id, {
+// CREATE
+async function create(id, containerId) {
+  await redis.set(
+    `wa:${id}`,
+    JSON.stringify({
       id,
       containerId,
       status: "starting",
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  updateStatus(id, status) {
-    const inst = this.instances.get(id);
-    if (!inst) return;
-
-    this.instances.set(id, {
-      ...inst,
-      status,
-    });
-  }
-
-  getAll() {
-    return Array.from(this.instances.values());
-  }
-
-  get(id) {
-    return this.instances.get(id);
-  }
+      createdAt: Date.now(),
+    }),
+  );
 }
 
-module.exports = new InstanceRegistry();
+// UPDATE
+async function updateStatus(id, status) {
+  const data = await redis.get(`wa:${id}`);
+  if (!data) return;
+
+  const parsed = JSON.parse(data);
+  parsed.status = status;
+
+  await redis.set(`wa:${id}`, JSON.stringify(parsed));
+}
+
+// GET ALL
+async function getAll() {
+  const keys = await redis.keys("wa:*");
+  const values = await Promise.all(keys.map((k) => redis.get(k)));
+
+  return values.map((v) => JSON.parse(v));
+}
+
+module.exports = { create, updateStatus, getAll };

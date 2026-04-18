@@ -1,6 +1,6 @@
 const express = require("express");
 const axios = require("axios");
-const registry = require("./registry.js");
+const Redis = require("ioredis");
 const { exec } = require("child_process");
 
 const app = express();
@@ -16,10 +16,20 @@ const INTERNAL_HTTP_PORT = 9000;
 const INTERNAL_TIMEOUT_MS = Number(process.env.INTERNAL_TIMEOUT_MS || 15000);
 
 if (!process.env.ORCH_KEY) {
-  console.error("❌ ORCH_KEY is not set in environment");
+  console.error("❌ ORCH_KEY is not set");
   process.exit(1);
 }
 const API_KEY = process.env.ORCH_KEY;
+
+// ==========================
+// REDIS
+// ==========================
+const redis = new Redis(process.env.REDIS_URL);
+
+redis
+  .ping()
+  .then(() => console.log("✅ Redis connected"))
+  .catch((err) => console.error("❌ Redis failed", err));
 
 // ==========================
 // HELPERS
@@ -78,7 +88,6 @@ app.post("/containers", (req, res) => {
   const name = safeContainerName(instanceId);
   const volume = safeVolumeName(instanceId);
 
-  // ensure old container removed
   sh(`docker rm -f ${name} >/dev/null 2>&1 || true`, () => {
     const cmd = `
 docker run -d \
@@ -94,7 +103,7 @@ docker run -d \
   ${BASE_IMAGE}
 `.trim();
 
-    sh(cmd, (err, stdout, stderr) => {
+    sh(cmd, async (err, stdout, stderr) => {
       if (err) {
         console.error("❌ Docker run failed:", err.message);
         return res.status(500).json({ error: err.message, stderr });
@@ -102,13 +111,20 @@ docker run -d \
 
       const containerId = stdout.trim();
 
-      // ==========================
-      // 1. REGISTER INSTANCE
-      // ==========================
-      registry.create(name, containerId);
+      // ✅ SAVE TO REDIS
+      await redis.set(
+        `wa:${instanceId}`,
+        JSON.stringify({
+          id: instanceId,
+          container: name,
+          containerId,
+          status: "starting",
+          createdAt: Date.now(),
+        }),
+      );
 
       // ==========================
-      // 2. START STATUS WATCHER
+      // STATUS WATCHER
       // ==========================
       const poll = setInterval(async () => {
         try {
@@ -118,14 +134,19 @@ docker run -d \
 
           const ready = r.data?.state === "ready" || r.data?.ready === true;
 
+          const key = `wa:${instanceId}`;
+          const current = JSON.parse(await redis.get(key));
+
           if (ready) {
-            registry.updateStatus(name, "running");
+            current.status = "running";
+            await redis.set(key, JSON.stringify(current));
             clearInterval(poll);
           } else {
-            registry.updateStatus(name, "starting");
+            current.status = "starting";
+            await redis.set(key, JSON.stringify(current));
           }
         } catch (e) {
-          registry.updateStatus(name, "starting");
+          // keep trying
         }
       }, 5000);
 
@@ -143,65 +164,59 @@ docker run -d \
 // ==========================
 // DELETE CONTAINER
 // ==========================
-app.delete("/containers/:name", (req, res) => {
+app.delete("/containers/:name", async (req, res) => {
   const name = safeId(req.params.name);
 
-  sh(`docker rm -f ${name}`, (err) => {
+  sh(`docker rm -f ${name}`, async (err) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    registry.updateStatus(name, "deleted");
+    // mark deleted in Redis
+    const keys = await redis.keys("wa:*");
+
+    for (const key of keys) {
+      const val = JSON.parse(await redis.get(key));
+      if (val.container === name) {
+        val.status = "deleted";
+        await redis.set(key, JSON.stringify(val));
+      }
+    }
+
     return res.json({ ok: true, deleted: name });
   });
+});
+
+// ==========================
+// LIST INSTANCES
+// ==========================
+app.get("/instances", async (req, res) => {
+  try {
+    const keys = await redis.keys("wa:*");
+
+    if (!keys.length) return res.json([]);
+
+    const values = await Promise.all(
+      keys.map(async (key) => JSON.parse(await redis.get(key))),
+    );
+
+    res.json(values);
+  } catch (err) {
+    console.error("❌ Failed to fetch instances:", err);
+    res.status(500).json({ error: "Failed to fetch instances" });
+  }
 });
 
 // ==========================
 // PROXY STATUS
 // ==========================
 app.get("/instances/:instanceId/status", async (req, res) => {
-  const { instanceId } = req.params;
-
   try {
-    const r = await axios.get(internalUrl(instanceId, "/status"), {
+    const r = await axios.get(internalUrl(req.params.instanceId, "/status"), {
       timeout: INTERNAL_TIMEOUT_MS,
     });
-
-    return res.json(r.data);
+    res.json(r.data);
   } catch (e) {
-    return res.status(502).json({
-      ready: false,
-      error: "Failed to reach WhatsApp instance",
-      detail: e.message,
-    });
+    res.status(502).json({ error: "Instance unreachable" });
   }
-});
-
-// ==========================
-// PROXY SEND ORDER
-// ==========================
-app.post("/instances/:instanceId/send-order", async (req, res) => {
-  const { instanceId } = req.params;
-
-  try {
-    const r = await axios.post(
-      internalUrl(instanceId, "/send-order"),
-      req.body,
-      { timeout: INTERNAL_TIMEOUT_MS },
-    );
-
-    return res.json(r.data);
-  } catch (e) {
-    return res.status(502).json({
-      error: "Failed to reach WhatsApp instance",
-      detail: e.message,
-    });
-  }
-});
-
-// ==========================
-// REGISTRY VIEW (NEW)
-// ==========================
-app.get("/instances", (req, res) => {
-  res.json(registry.getAll());
 });
 
 // ==========================
@@ -212,8 +227,6 @@ app.get("/status", (req, res) => {
     ok: true,
     orchestrator: "running",
     timestamp: new Date().toISOString(),
-    network: DOCKER_NETWORK,
-    image: BASE_IMAGE,
   });
 });
 
