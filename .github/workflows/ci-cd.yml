@@ -60,8 +60,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           script: |
-            set -euo pipefail
-            trap 'echo "Deploy failed at line $LINENO"' ERR
+            set -eu
 
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
 
@@ -131,11 +130,11 @@ jobs:
               fi
 
               env_dump="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$name")"
-              instance_id="$(printf '%s\n' "$env_dump" | sed -n 's/^INSTANCE_ID=//p' | head -n 1)"
-              http_port="$(printf '%s\n' "$env_dump" | sed -n 's/^HTTP_PORT=//p' | head -n 1)"
-              ws_port="$(printf '%s\n' "$env_dump" | sed -n 's/^WS_PORT=//p' | head -n 1)"
-              session_path="$(printf '%s\n' "$env_dump" | sed -n 's/^SESSION_PATH=//p' | head -n 1)"
-              session_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/sessions"}}{{println .Name}}{{end}}{{end}}' "$name" | head -n 1)"
+              instance_id="$(printf '%s\n' "$env_dump" | awk 'index($0, "INSTANCE_ID=") == 1 { print substr($0, 13); exit }')"
+              http_port="$(printf '%s\n' "$env_dump" | awk 'index($0, "HTTP_PORT=") == 1 { print substr($0, 11); exit }')"
+              ws_port="$(printf '%s\n' "$env_dump" | awk 'index($0, "WS_PORT=") == 1 { print substr($0, 9); exit }')"
+              session_path="$(printf '%s\n' "$env_dump" | awk 'index($0, "SESSION_PATH=") == 1 { print substr($0, 14); exit }')"
+              session_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/sessions"}}{{.Name}}{{end}}{{end}}' "$name" 2>/dev/null || true)"
 
               instance_id="${instance_id:-${name#wa_}}"
               http_port="${http_port:-9000}"
@@ -197,7 +196,8 @@ jobs:
               echo "Refresh completed for $name"
             }
 
-            whatsapp_containers="$(docker ps -a --filter "name=^/wa_" --format '{{.Names}}' | sed '/_backup_/d')"
+            set +e
+            whatsapp_containers="$(docker ps -a --filter "name=^/wa_" --format '{{.Names}}' | grep -v '_backup_' || true)"
             if [ -z "$whatsapp_containers" ]; then
               echo "No WhatsApp instance containers found to refresh."
             else
@@ -205,6 +205,7 @@ jobs:
                 refresh_whatsapp_instance "$container_name"
               done
             fi
+            set -e
 
             if [ -n "$refresh_failures" ]; then
               echo "Deployment finished with instance refresh warnings:$refresh_failures"
