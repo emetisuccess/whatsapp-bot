@@ -60,19 +60,57 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           script: |
-            set -e
+            set -euo pipefail
+            trap 'echo "Deploy failed at line $LINENO"' ERR
+
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+
+            compose_cmd() {
+              if docker compose version >/dev/null 2>&1; then
+                docker compose "$@"
+                return
+              fi
+              if command -v docker-compose >/dev/null 2>&1; then
+                docker-compose "$@"
+                return
+              fi
+              echo "Docker Compose is not available on server (need docker compose or docker-compose)."
+              return 1
+            }
+
+            if ! command -v git >/dev/null 2>&1; then
+              echo "git is not installed on server"
+              exit 1
+            fi
+
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "docker is not installed on server"
+              exit 1
+            fi
+
             if [ ! -d "$DEPLOY_PATH" ]; then
               echo "DEPLOY_PATH does not exist on server: $DEPLOY_PATH"
               exit 1
             fi
+
             cd "$DEPLOY_PATH"
+
+            if [ ! -d .git ]; then
+              echo "DEPLOY_PATH is not a git repository: $DEPLOY_PATH"
+              exit 1
+            fi
+
+            if [ ! -f docker-compose.yml ]; then
+              echo "docker-compose.yml not found in DEPLOY_PATH: $DEPLOY_PATH"
+              exit 1
+            fi
+
             git fetch origin main
             git reset --hard origin/main
             docker network inspect wa-net >/dev/null 2>&1 || docker network create wa-net
             docker build -t whatsapp-service:latest ./whatsapp-app
             docker build -t wa-orchestrator:latest ./orchestrator
-            docker compose up -d --build orchestrator
+            compose_cmd up -d --build orchestrator
 
             refresh_whatsapp_instance() {
               name="$1"
@@ -137,7 +175,7 @@ jobs:
               docker rm -f "$backup_name"
             }
 
-            whatsapp_containers="$(docker ps -a --filter "name=^wa_" --format '{{.Names}}')"
+            whatsapp_containers="$(docker ps -a --filter "name=^/wa_" --format '{{.Names}}' | sed '/_backup_/d')"
             if [ -z "$whatsapp_containers" ]; then
               echo "No WhatsApp instance containers found to refresh."
             else
