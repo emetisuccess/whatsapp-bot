@@ -4,10 +4,14 @@ ENV NODE_ENV=production \
     PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
     PUPPETEER_SKIP_DOWNLOAD=true
 
-WORKDIR /home/pptruser/app
+USER root
 
 RUN mkdir -p /sessions \
     && chown -R pptruser:pptruser /sessions
+
+USER pptruser
+
+WORKDIR /home/pptruser/app
 
 COPY --chown=pptruser:pptruser package*.json ./
 RUN npm ci --omit=dev
