@@ -240,7 +240,9 @@ client.on("message", async (msg) => {
     if (!text) return;
 
     if (text.toUpperCase() === "PING") {
-      await msg.reply(msg.from);
+      await msg.reply(
+        "Hello! I'm alive and syncing. Please wait a few minutes before sending commands.",
+      );
       return;
     }
 
