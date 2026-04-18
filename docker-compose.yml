@@ -5,7 +5,7 @@ services:
     image: redis:7-alpine
     container_name: wa-redis
     ports:
-      - "6380:6379"
+      - "6379:6380"
     restart: unless-stopped
     networks:
       - wa-net
@@ -21,7 +21,7 @@ services:
       ORCH_KEY: "REPLACE_WITH_YOUR_KEY"
       WA_NETWORK: "wa-net"
       WA_IMAGE: "whatsapp-service:latest"
-      REDIS_URL: "redis://wa-redis:6380"
+      REDIS_URL: "redis://wa-redis:6379"
     depends_on:
       - redis
     volumes:
